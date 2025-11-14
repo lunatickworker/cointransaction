@@ -148,26 +148,22 @@ export function UserApp() {
           )}
           {currentScreen === 'deposit' && (
             <Deposit
-              wallets={wallets}
               selectedCoin={selectedCoin}
+              walletAddress={wallets.find(w => w.coin_type === selectedCoin)?.address || ''}
               onNavigate={setCurrentScreen}
-              onSelectCoin={setSelectedCoin}
             />
           )}
           {currentScreen === 'withdrawal' && (
             <Withdrawal
-              wallets={wallets}
               selectedCoin={selectedCoin}
+              balance={wallets.find(w => w.coin_type === selectedCoin)?.balance || 0}
               onNavigate={setCurrentScreen}
-              onSelectCoin={setSelectedCoin}
             />
           )}
           {currentScreen === 'swap' && (
             <Swap
               wallets={wallets}
-              selectedCoin={selectedCoin}
               onNavigate={setCurrentScreen}
-              onSelectCoin={setSelectedCoin}
             />
           )}
           {currentScreen === 'transactions' && (

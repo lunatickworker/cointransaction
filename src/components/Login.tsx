@@ -95,12 +95,6 @@ export function Login() {
               )}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-slate-700">
-            <p className="text-slate-400 text-sm text-center">
-              <span className="text-cyan-400">테스트 계정:</span> admin@example.com / admin123
-            </p>
-          </div>
         </div>
       </div>
     </div>

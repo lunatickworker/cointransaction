@@ -1,5 +1,4 @@
 import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Users, Shield, Wallet, Activity, Repeat } from "lucide-react";
-import { useNavigate } from 'react-router-dom';
 
 interface SidebarProps {
   activeTab: string;
@@ -7,7 +6,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
-  const navigate = useNavigate();
   const menuItems = [
     { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
     { id: "withdrawals", label: "출금 관리", icon: ArrowUpFromLine },
@@ -18,11 +16,16 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     { id: "security", label: "보안 모니터", icon: Shield },
   ];
 
+  const handleLogoClick = () => {
+    window.history.pushState({}, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   return (
     <aside className="w-64 bg-slate-900/50 backdrop-blur-xl border-r border-cyan-500/20">
       <div className="p-6">
         <button 
-          onClick={() => navigate('/')}
+          onClick={handleLogoClick}
           className="flex items-center gap-3 mb-8 group w-full hover:scale-105 transition-transform"
         >
           <div 
