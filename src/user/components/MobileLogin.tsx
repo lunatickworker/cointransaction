@@ -97,10 +97,7 @@ export function MobileLogin() {
         {/* Logo Section */}
         <div className="text-center mb-10 animate-fade-in">
           <div 
-            className="relative inline-block mb-5 cursor-pointer active:scale-95 transition-transform"
-            onClick={() => {
-              window.location.href = '/admin';
-            }}
+            className="relative inline-block mb-5"
           >
             <div className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-purple-500 rounded-2xl blur-lg opacity-40 animate-pulse"></div>
             <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-400 to-purple-500 flex items-center justify-center shadow-xl">

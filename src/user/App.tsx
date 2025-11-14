@@ -32,11 +32,7 @@ export interface Transaction {
   created_at: string;
 }
 
-interface UserAppProps {
-  onNavigateToAdmin: () => void;
-}
-
-export function UserApp({ onNavigateToAdmin }: UserAppProps) {
+export function UserApp() {
   const { user } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
   const [wallets, setWallets] = useState<WalletData[]>([]);
@@ -130,7 +126,7 @@ export function UserApp({ onNavigateToAdmin }: UserAppProps) {
 
       {/* Mobile Container */}
       <div className="relative max-w-md mx-auto min-h-screen bg-slate-900/30 backdrop-blur-xl border-x border-slate-700/50">
-        <TopBar currentScreen={currentScreen} onNavigateToAdmin={onNavigateToAdmin} />
+        <TopBar currentScreen={currentScreen} />
 
         {/* Content */}
         <div className="p-4 pb-24 overflow-y-auto">

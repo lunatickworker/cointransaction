@@ -9,11 +9,7 @@ import { SwapManagement } from "./SwapManagement";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 
-interface AdminAppProps {
-  onNavigateToUser: () => void;
-}
-
-export function AdminApp({ onNavigateToUser }: AdminAppProps) {
+export function AdminApp() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
 
   return (
@@ -25,7 +21,7 @@ export function AdminApp({ onNavigateToUser }: AdminAppProps) {
       </div>
 
       <div className="relative flex h-screen">
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onNavigateToUser={onNavigateToUser} />
+        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
         
         <div className="flex-1 flex flex-col overflow-hidden">
           <Header />
