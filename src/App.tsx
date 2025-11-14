@@ -13,13 +13,27 @@ function AppContent() {
 
   // Check URL path to determine which app to show
   useEffect(() => {
-    const path = window.location.pathname;
-    if (path.startsWith('/transaction') || path.startsWith('/admin')) {
-      setCurrentPage('admin');
-    } else {
-      // 루트 경로(/)나 기타 모든 경로는 사용자 페이지로
-      setCurrentPage('mobile');
+    // 해시 제거
+    if (window.location.hash) {
+      const path = window.location.hash.replace('#', '');
+      window.history.replaceState({}, '', path || '/');
     }
+    
+    const updatePage = () => {
+      const path = window.location.pathname;
+      if (path.startsWith('/transaction') || path.startsWith('/admin')) {
+        setCurrentPage('admin');
+      } else {
+        // 루트 경로(/)나 기타 모든 경로는 사용자 페이지로
+        setCurrentPage('mobile');
+      }
+    };
+    
+    updatePage();
+    
+    // auth-change 이벤트 리스너 추가
+    window.addEventListener('auth-change', updatePage);
+    return () => window.removeEventListener('auth-change', updatePage);
   }, []);
 
   // Listen to popstate event for browser back/forward

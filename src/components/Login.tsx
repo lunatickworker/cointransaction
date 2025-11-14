@@ -42,8 +42,8 @@ export function Login() {
               <Activity className="w-8 h-8 text-cyan-400" style={{ filter: 'drop-shadow(0 0 5px rgba(6, 182, 212, 1))' }} />
             </div>
           </div>
-          <h1 className="text-cyan-400 text-2xl mb-2">Crypto Management</h1>
-          <p className="text-slate-400">암호화폐 입출금 관리 시스템</p>
+          <h1 className="text-cyan-400 text-2xl mb-2">Admin Console</h1>
+          <p className="text-slate-400">관리자 전용 페이지</p>
         </div>
 
         {/* Login Card */}
@@ -58,7 +58,7 @@ export function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-800/50 border border-cyan-500/20 rounded-lg pl-12 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 transition-all"
-                  placeholder="이메일을 입력하세요"
+                  placeholder="관리자 이메일"
                   required
                 />
               </div>
@@ -73,7 +73,7 @@ export function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-slate-800/50 border border-cyan-500/20 rounded-lg pl-12 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 transition-all"
-                  placeholder="비밀번호를 입력하세요"
+                  placeholder="비밀번호"
                   required
                 />
               </div>
@@ -89,7 +89,7 @@ export function Login() {
               ) : (
                 <>
                   <LogIn className="w-5 h-5" />
-                  <span>로그인</span>
+                  <span>관리자 로그인</span>
                 </>
               )}
             </button>
@@ -97,10 +97,7 @@ export function Login() {
 
           <div className="mt-6 pt-6 border-t border-slate-700">
             <p className="text-slate-400 text-sm text-center">
-              <span className="text-cyan-400">관리자:</span> admin@example.com / admin123
-            </p>
-            <p className="text-slate-400 text-sm text-center mt-1">
-              <span className="text-cyan-400">사용자:</span> hong@example.com / password123
+              <span className="text-cyan-400">테스트 계정:</span> admin@example.com / admin123
             </p>
           </div>
         </div>

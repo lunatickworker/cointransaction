@@ -67,6 +67,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('users')
       .update({ last_login: new Date().toISOString() })
       .eq('user_id', dbUser.user_id);
+    
+    // 역할에 따라 적절한 페이지로 리다이렉트 (reload 제거)
+    if (loggedInUser.role === 'admin') {
+      window.history.pushState({}, '', '/transaction');
+    } else {
+      window.history.pushState({}, '', '/');
+    }
+    
+    // 커스텀 이벤트 발생으로 App.tsx가 리렌더링되도록 함
+    window.dispatchEvent(new Event('auth-change'));
   };
 
   const logout = () => {
@@ -74,14 +84,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     localStorage.removeItem('user');
     
-    // 현재 페이지에 따라 적절한 경로로 리다이렉트 후 새로고침
+    // 현재 페이지에 따라 적절한 경로로 리다이렉트 (reload 제거)
     if (currentPath.startsWith('/transaction') || currentPath.startsWith('/admin')) {
       window.history.pushState({}, '', '/transaction');
-      window.location.reload();
     } else {
       window.history.pushState({}, '', '/');
-      window.location.reload();
     }
+    
+    // 커스텀 이벤트 발생
+    window.dispatchEvent(new Event('auth-change'));
   };
 
   return (
