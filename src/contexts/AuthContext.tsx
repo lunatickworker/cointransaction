@@ -11,7 +11,7 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => void;
   isLoading: boolean;
 }
@@ -76,6 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('users')
       .update({ last_login: new Date().toISOString() })
       .eq('user_id', dbUser.user_id);
+    
+    return loggedInUser;
   };
 
   const logout = () => {

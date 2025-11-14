@@ -47,14 +47,6 @@ function AppContent() {
     }
     
     // 관리자로 로그인됨 → 관리자 앱
-    if (user.role === 'admin') {
-      return <AdminApp onNavigateToUser={() => {
-        window.history.pushState({}, '', '/');
-        setCurrentPage('user');
-      }} />;
-    }
-    
-    // 일반 사용자도 관리자 페이지 볼 수 있도록 허용 (테스트/개발용)
     return <AdminApp onNavigateToUser={() => {
       window.history.pushState({}, '', '/');
       setCurrentPage('user');
@@ -62,7 +54,6 @@ function AppContent() {
   }
 
   // 사용자 페이지 (/)
-  // UserApp은 자체적으로 로그인 상태를 처리
   return <UserApp onNavigateToAdmin={() => {
     window.history.pushState({}, '', '/transaction');
     setCurrentPage('admin');

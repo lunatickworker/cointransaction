@@ -25,7 +25,14 @@ export function MobileLogin() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      
+      // 관리자는 사용자 페이지 로그인 불가
+      if (result && result.role === 'admin') {
+        toast.error('관리자는 사용자 페이지에 로그인할 수 없습니다');
+        setIsLoading(false);
+        return;
+      }
       
       // 로그인 유지 체크 시 localStorage에 저장
       if (rememberMe) {
