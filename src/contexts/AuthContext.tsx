@@ -75,11 +75,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('user');
     
     // 현재 페이지에 따라 적절한 경로로 리다이렉트 후 새로고침
-    if (currentPath.startsWith('/admin')) {
-      window.history.pushState({}, '', '/admin');
+    if (currentPath.startsWith('/transaction') || currentPath.startsWith('/admin')) {
+      window.history.pushState({}, '', '/transaction');
       window.location.reload();
     } else {
-      window.history.pushState({}, '', '/mobile');
+      window.history.pushState({}, '', '/');
       window.location.reload();
     }
   };

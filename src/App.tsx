@@ -14,12 +14,10 @@ function AppContent() {
   // Check URL path to determine which app to show
   useEffect(() => {
     const path = window.location.pathname;
-    if (path.startsWith('/admin')) {
+    if (path.startsWith('/transaction') || path.startsWith('/admin')) {
       setCurrentPage('admin');
-    } else if (path.startsWith('/mobile') || path.startsWith('/user')) {
-      setCurrentPage('mobile');
     } else {
-      // 루트 경로나 기타 경로는 mobile로
+      // 루트 경로(/)나 기타 모든 경로는 사용자 페이지로
       setCurrentPage('mobile');
     }
   }, []);
@@ -28,12 +26,9 @@ function AppContent() {
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname;
-      if (path.startsWith('/admin')) {
+      if (path.startsWith('/transaction') || path.startsWith('/admin')) {
         setCurrentPage('admin');
-      } else if (path.startsWith('/mobile') || path.startsWith('/user')) {
-        setCurrentPage('mobile');
       } else {
-        // 루트 경로나 기타 경로는 mobile로
         setCurrentPage('mobile');
       }
     };
@@ -59,7 +54,7 @@ function AppContent() {
     // 그 외에는 모바일 사용자 로그인 페이지 (UserApp 내부에서 처리)
     return <UserApp onNavigateToAdmin={() => {
       setCurrentPage('admin');
-      window.history.pushState({}, '', '/admin');
+      window.history.pushState({}, '', '/transaction');
     }} />;
   }
 
@@ -68,7 +63,7 @@ function AppContent() {
     // 일반 사용자는 admin 페이지 접근 불가
     if (currentPage === 'admin') {
       setCurrentPage('mobile');
-      window.history.pushState({}, '', '/mobile');
+      window.history.pushState({}, '', '/');
     }
     return <UserApp onNavigateToAdmin={() => {
       // 일반 사용자는 admin 접근 불가
@@ -80,14 +75,14 @@ function AppContent() {
   if (currentPage === 'admin') {
     return <AdminApp onNavigateToUser={() => {
       setCurrentPage('mobile');
-      window.history.pushState({}, '', '/mobile');
+      window.history.pushState({}, '', '/');
     }} />;
   }
 
   // Admin이 mobile 또는 user 페이지 접근
   return <UserApp onNavigateToAdmin={() => {
     setCurrentPage('admin');
-    window.history.pushState({}, '', '/admin');
+    window.history.pushState({}, '', '/transaction');
   }} />;
 }
 
