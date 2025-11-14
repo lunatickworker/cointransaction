@@ -9,7 +9,11 @@ type Page = 'admin' | 'user';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<Page>('user');
+  // 초기 페이지 상태를 URL에서 결정
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const path = window.location.pathname;
+    return path.startsWith('/transaction') ? 'admin' : 'user';
+  });
 
   // URL 경로에 따라 페이지 결정
   useEffect(() => {
@@ -21,8 +25,6 @@ function AppContent() {
         setCurrentPage('user');
       }
     };
-    
-    updatePage();
     
     // popstate 이벤트 리스너 (뒤로가기/앞으로가기)
     window.addEventListener('popstate', updatePage);
