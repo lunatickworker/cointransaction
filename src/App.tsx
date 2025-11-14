@@ -5,50 +5,28 @@ import { UserApp } from "./user/App";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { Toaster } from "sonner@2.0.3";
 
-type Page = 'admin' | 'user' | 'mobile';
+type Page = 'admin' | 'user';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
   const [currentPage, setCurrentPage] = useState<Page>('user');
 
-  // Check URL path to determine which app to show
+  // URL 경로에 따라 페이지 결정
   useEffect(() => {
-    // 해시 제거
-    if (window.location.hash) {
-      const path = window.location.hash.replace('#', '');
-      window.history.replaceState({}, '', path || '/');
-    }
-    
     const updatePage = () => {
       const path = window.location.pathname;
-      if (path.startsWith('/transaction') || path.startsWith('/admin')) {
+      if (path.startsWith('/transaction')) {
         setCurrentPage('admin');
       } else {
-        // 루트 경로(/)나 기타 모든 경로는 사용자 페이지로
-        setCurrentPage('mobile');
+        setCurrentPage('user');
       }
     };
     
     updatePage();
     
-    // auth-change 이벤트 리스너 추가
-    window.addEventListener('auth-change', updatePage);
-    return () => window.removeEventListener('auth-change', updatePage);
-  }, []);
-
-  // Listen to popstate event for browser back/forward
-  useEffect(() => {
-    const handlePopState = () => {
-      const path = window.location.pathname;
-      if (path.startsWith('/transaction') || path.startsWith('/admin')) {
-        setCurrentPage('admin');
-      } else {
-        setCurrentPage('mobile');
-      }
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    // popstate 이벤트 리스너 (뒤로가기/앞으로가기)
+    window.addEventListener('popstate', updatePage);
+    return () => window.removeEventListener('popstate', updatePage);
   }, []);
 
   if (isLoading) {
@@ -59,44 +37,33 @@ function AppContent() {
     );
   }
 
-  // 로그인하지 않은 경우
-  if (!user) {
-    // 관리자 페이지 접근 시도 시 관리자 로그인 페이지
-    if (currentPage === 'admin') {
+  // 관리자 페이지 (/transaction)
+  if (currentPage === 'admin') {
+    // 로그인 안됨 → 관리자 로그인 페이지
+    if (!user) {
       return <Login />;
     }
-    // 그 외에는 모바일 사용자 로그인 페이지 (UserApp 내부에서 처리)
-    return <UserApp onNavigateToAdmin={() => {
-      setCurrentPage('admin');
-      window.history.pushState({}, '', '/transaction');
-    }} />;
-  }
-
-  // Route based on user role and current page
-  if (user.role === 'user') {
-    // 일반 사용자는 admin 페이지 접근 불가
-    if (currentPage === 'admin') {
-      setCurrentPage('mobile');
-      window.history.pushState({}, '', '/');
+    
+    // 관리자로 로그인됨 → 관리자 앱
+    if (user.role === 'admin') {
+      return <AdminApp onNavigateToUser={() => {
+        window.history.pushState({}, '', '/');
+        setCurrentPage('user');
+      }} />;
     }
-    return <UserApp onNavigateToAdmin={() => {
-      // 일반 사용자는 admin 접근 불가
-      alert('관리자 권한이 필요합니다');
-    }} />;
-  }
-
-  // Admin can access all pages
-  if (currentPage === 'admin') {
+    
+    // 일반 사용자도 관리자 페이지 볼 수 있도록 허용 (테스트/개발용)
     return <AdminApp onNavigateToUser={() => {
-      setCurrentPage('mobile');
       window.history.pushState({}, '', '/');
+      setCurrentPage('user');
     }} />;
   }
 
-  // Admin이 mobile 또는 user 페이지 접근
+  // 사용자 페이지 (/)
+  // UserApp은 자체적으로 로그인 상태를 처리
   return <UserApp onNavigateToAdmin={() => {
-    setCurrentPage('admin');
     window.history.pushState({}, '', '/transaction');
+    setCurrentPage('admin');
   }} />;
 }
 

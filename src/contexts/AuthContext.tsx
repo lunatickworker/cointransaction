@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in
+    // 로컬 스토리지에서 사용자 정보 복원
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       setUser(JSON.parse(storedUser));
@@ -32,6 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
+    const currentPath = window.location.pathname;
+    const isAdminPage = currentPath.startsWith('/transaction');
+    
     // DB에서 사용자 조회
     const { data: users, error } = await supabase
       .from('users')
@@ -59,6 +62,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       username: dbUser.username,
       role: dbUser.role || 'user'
     };
+    
+    // 역할 검증: 관리자 페이지에서는 관리자만 로그인 가능
+    if (isAdminPage && loggedInUser.role !== 'admin') {
+      throw new Error('관리자 권한이 필요합니다');
+    }
+    
     setUser(loggedInUser);
     localStorage.setItem('user', JSON.stringify(loggedInUser));
     
@@ -67,32 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('users')
       .update({ last_login: new Date().toISOString() })
       .eq('user_id', dbUser.user_id);
-    
-    // 역할에 따라 적절한 페이지로 리다이렉트 (reload 제거)
-    if (loggedInUser.role === 'admin') {
-      window.history.pushState({}, '', '/transaction');
-    } else {
-      window.history.pushState({}, '', '/');
-    }
-    
-    // 커스텀 이벤트 발생으로 App.tsx가 리렌더링되도록 함
-    window.dispatchEvent(new Event('auth-change'));
   };
 
   const logout = () => {
-    const currentPath = window.location.pathname;
     setUser(null);
     localStorage.removeItem('user');
-    
-    // 현재 페이지에 따라 적절한 경로로 리다이렉트 (reload 제거)
-    if (currentPath.startsWith('/transaction') || currentPath.startsWith('/admin')) {
-      window.history.pushState({}, '', '/transaction');
-    } else {
-      window.history.pushState({}, '', '/');
-    }
-    
-    // 커스텀 이벤트 발생
-    window.dispatchEvent(new Event('auth-change'));
   };
 
   return (

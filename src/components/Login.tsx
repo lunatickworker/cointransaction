@@ -15,9 +15,10 @@ export function Login() {
 
     try {
       await login(email, password);
-      toast.success('로그인 성공!');
+      toast.success('로그인 성공');
+      // 로그인 성공 시 AuthContext에서 role 검증 완료됨
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '로그인에 실패했습니다');
+      toast.error(error instanceof Error ? error.message : '로그인 실패');
     } finally {
       setIsLoading(false);
     }
