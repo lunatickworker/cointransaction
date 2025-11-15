@@ -1,38 +1,13 @@
-import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from "./components/Login";
 import { AdminApp } from "./components/AdminApp";
 import { UserApp } from "./user/App";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { Toaster } from "sonner@2.0.3";
 
-type Page = 'admin' | 'user';
-
-function AppContent() {
+// 관리자 페이지 보호 라우트
+function AdminRoute() {
   const { user, isLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<Page>(() => {
-    const path = window.location.pathname;
-    return path.startsWith('/transaction') ? 'admin' : 'user';
-  });
-
-  // URL 변경 감지 및 페이지 업데이트
-  useEffect(() => {
-    const handleLocationChange = () => {
-      const path = window.location.pathname;
-      if (path.startsWith('/transaction')) {
-        setCurrentPage('admin');
-      } else {
-        setCurrentPage('user');
-      }
-    };
-
-    // popstate 이벤트 (뒤로가기/앞으로가기)
-    window.addEventListener('popstate', handleLocationChange);
-    
-    // 초기 로드 시 URL 확인
-    handleLocationChange();
-    
-    return () => window.removeEventListener('popstate', handleLocationChange);
-  }, []);
 
   if (isLoading) {
     return (
@@ -42,22 +17,28 @@ function AppContent() {
     );
   }
 
-  // 관리자 페이지 (/transaction)
-  if (currentPage === 'admin') {
-    if (!user) {
-      return <Login />;
-    }
-    return <AdminApp />;
+  if (!user) {
+    return <Login />;
   }
 
-  // 사용자 페이지 (/)
+  return <AdminApp />;
+}
+
+// 사용자 페이지 라우트
+function UserRoute() {
   return <UserApp />;
 }
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<UserRoute />} />
+          <Route path="/transaction" element={<AdminRoute />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
       <Toaster position="top-right" richColors />
     </AuthProvider>
   );

@@ -1,4 +1,5 @@
 import { Bell, Wallet } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Screen } from '../App';
 
 interface TopBarProps {
@@ -6,6 +7,8 @@ interface TopBarProps {
 }
 
 export function TopBar({ currentScreen }: TopBarProps) {
+  const navigate = useNavigate();
+  
   const getTitle = () => {
     switch (currentScreen) {
       case 'home': return '홈';
@@ -18,17 +21,12 @@ export function TopBar({ currentScreen }: TopBarProps) {
     }
   };
 
-  const handleLogoClick = () => {
-    window.history.pushState({}, '', '/transaction');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  };
-
   return (
     <div className="sticky top-0 bg-slate-900/95 backdrop-blur-xl border-b border-cyan-500/20 p-4 z-10">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button 
-            onClick={handleLogoClick}
+            onClick={() => navigate('/transaction')}
             className="w-8 h-8 rounded-lg bg-slate-800 border border-cyan-500/50 flex items-center justify-center hover:border-cyan-400 transition-all active:scale-95"
             style={{
               boxShadow: '0 0 10px rgba(6, 182, 212, 0.3), inset 0 0 10px rgba(6, 182, 212, 0.1)'
