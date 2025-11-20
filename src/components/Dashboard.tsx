@@ -1,36 +1,321 @@
 import { TrendingUp, TrendingDown, Users, AlertTriangle, Wallet, Activity } from "lucide-react";
 import { NeonCard } from "./NeonCard";
 import { StatCard } from "./StatCard";
+import { useState, useEffect } from "react";
+import { supabase } from "../utils/supabase/client";
+
+interface Transaction {
+  id: string;
+  user: {
+    username: string;
+  };
+  type: string;
+  coin_type: string;
+  amount: number;
+  status: string;
+  created_at: string;
+}
 
 export function Dashboard() {
-  const stats = [
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    todayDeposits: 0,
+    todayWithdrawals: 0,
+    pendingApprovals: 0,
+    depositChange: 0,
+    withdrawalChange: 0,
+    userChange: 0
+  });
+
+  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+  const [walletStatus, setWalletStatus] = useState({
+    hotWallet: 0,
+    coldWallet: 0,
+    total: 0
+  });
+  const [loading, setLoading] = useState(false); // 즉시 UI 표시
+
+  useEffect(() => {
+    fetchDashboardData();
+
+    // 실시간 업데이트 설정
+    const channel = supabase
+      .channel('dashboard-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals' }, () => {
+        fetchDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits' }, () => {
+        fetchDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      // 1. 통계 데이터 가져오기
+      await Promise.all([
+        fetchUserStats(),
+        fetchTransactionStats(),
+        fetchRecentTransactions(),
+        fetchWalletStatus()
+      ]);
+    } catch (error) {
+      console.error('Dashboard data fetch error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchUserStats = async () => {
+    const { count: totalUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'user');
+
+    // 이전 달 사용자 수
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const { count: lastMonthUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'user')
+      .lte('created_at', lastMonth.toISOString());
+
+    const userChange = totalUsers && lastMonthUsers 
+      ? ((totalUsers - lastMonthUsers) / lastMonthUsers * 100).toFixed(1)
+      : 0;
+
+    setStats(prev => ({ ...prev, totalUsers: totalUsers || 0, userChange: Number(userChange) }));
+  };
+
+  const fetchTransactionStats = async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // 오늘 입금
+    const { data: todayDepositsData } = await supabase
+      .from('deposits')
+      .select('amount')
+      .eq('status', 'confirmed')
+      .gte('created_at', today.toISOString());
+
+    const todayDepositsTotal = todayDepositsData?.reduce((sum, d) => sum + Number(d.amount), 0) || 0;
+
+    // 어제 입금
+    const { data: yesterdayDepositsData } = await supabase
+      .from('deposits')
+      .select('amount')
+      .eq('status', 'confirmed')
+      .gte('created_at', yesterday.toISOString())
+      .lt('created_at', today.toISOString());
+
+    const yesterdayDepositsTotal = yesterdayDepositsData?.reduce((sum, d) => sum + Number(d.amount), 0) || 0;
+
+    const depositChange = yesterdayDepositsTotal > 0
+      ? ((todayDepositsTotal - yesterdayDepositsTotal) / yesterdayDepositsTotal * 100).toFixed(1)
+      : 0;
+
+    // 오늘 출금
+    const { data: todayWithdrawalsData } = await supabase
+      .from('withdrawals')
+      .select('amount')
+      .in('status', ['completed', 'processing'])
+      .gte('created_at', today.toISOString());
+
+    const todayWithdrawalsTotal = todayWithdrawalsData?.reduce((sum, w) => sum + Number(w.amount), 0) || 0;
+
+    // 어제 출금
+    const { data: yesterdayWithdrawalsData } = await supabase
+      .from('withdrawals')
+      .select('amount')
+      .in('status', ['completed', 'processing'])
+      .gte('created_at', yesterday.toISOString())
+      .lt('created_at', today.toISOString());
+
+    const yesterdayWithdrawalsTotal = yesterdayWithdrawalsData?.reduce((sum, w) => sum + Number(w.amount), 0) || 0;
+
+    const withdrawalChange = yesterdayWithdrawalsTotal > 0
+      ? ((todayWithdrawalsTotal - yesterdayWithdrawalsTotal) / yesterdayWithdrawalsTotal * 100).toFixed(1)
+      : 0;
+
+    // 대기 승인 (출금 + 입금)
+    const { count: pendingWithdrawals } = await supabase
+      .from('withdrawals')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+
+    const { count: pendingDeposits } = await supabase
+      .from('deposits')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+
+    const pendingApprovals = (pendingWithdrawals || 0) + (pendingDeposits || 0);
+
+    setStats(prev => ({
+      ...prev,
+      todayDeposits: todayDepositsTotal,
+      todayWithdrawals: todayWithdrawalsTotal,
+      pendingApprovals,
+      depositChange: Number(depositChange),
+      withdrawalChange: Number(withdrawalChange)
+    }));
+  };
+
+  const fetchRecentTransactions = async () => {
+    // 입금과 출금을 합쳐서 최근 5개 가져오기
+    const { data: deposits } = await supabase
+      .from('deposits')
+      .select(`
+        deposit_id,
+        coin_type,
+        amount,
+        status,
+        created_at,
+        users!inner(username)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(3);
+
+    const { data: withdrawals } = await supabase
+      .from('withdrawals')
+      .select(`
+        withdrawal_id,
+        coin_type,
+        amount,
+        status,
+        created_at,
+        users!inner(username)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(3);
+
+    // 합치고 정렬
+    const allTransactions = [
+      ...(deposits?.map(d => ({
+        id: d.deposit_id,
+        user: { username: d.users.username },
+        type: 'deposit',
+        coin_type: d.coin_type,
+        amount: Number(d.amount),
+        status: d.status,
+        created_at: d.created_at
+      })) || []),
+      ...(withdrawals?.map(w => ({
+        id: w.withdrawal_id,
+        user: { username: w.users.username },
+        type: 'withdrawal',
+        coin_type: w.coin_type,
+        amount: Number(w.amount),
+        status: w.status,
+        created_at: w.created_at
+      })) || [])
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 5);
+
+    setRecentTransactions(allTransactions);
+  };
+
+  const fetchWalletStatus = async () => {
+    // Hot Wallet 잔액
+    const { data: hotWallets } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('wallet_type', 'hot');
+
+    const hotWalletTotal = hotWallets?.reduce((sum, w) => sum + Number(w.balance), 0) || 0;
+
+    // Cold Wallet 잔액
+    const { data: coldWallets } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('wallet_type', 'cold');
+
+    const coldWalletTotal = coldWallets?.reduce((sum, w) => sum + Number(w.balance), 0) || 0;
+
+    const total = hotWalletTotal + coldWalletTotal;
+
+    setWalletStatus({
+      hotWallet: hotWalletTotal,
+      coldWallet: coldWalletTotal,
+      total
+    });
+  };
+
+  const formatCurrency = (amount: number) => {
+    // DB의 balance는 이미 원화 금액이므로 그대로 표시
+    return `₩${amount.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}`;
+  };
+
+  const formatAmount = (amount: number) => {
+    if (amount >= 1000000000) {
+      return `${(amount / 1000000000).toFixed(1)}B`;
+    } else if (amount >= 1000000) {
+      return `${(amount / 1000000).toFixed(1)}M`;
+    } else if (amount >= 1000) {
+      return `${(amount / 1000).toFixed(1)}K`;
+    }
+    return amount.toFixed(2);
+  };
+
+  const getTimeAgo = (dateString: string) => {
+    const now = new Date().getTime();
+    const time = new Date(dateString).getTime();
+    const diff = Math.floor((now - time) / 1000 / 60); // minutes
+
+    if (diff < 1) return '방금 전';
+    if (diff < 60) return `${diff}분 전`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}시간 전`;
+    return `${Math.floor(diff / 1440)}일 전`;
+  };
+
+  const getStatusLabel = (status: string) => {
+    const statusMap: { [key: string]: string } = {
+      'confirmed': '완료',
+      'completed': '완료',
+      'pending': '대기',
+      'processing': '처리중',
+      'failed': '실패',
+      'rejected': '거부됨'
+    };
+    return statusMap[status] || status;
+  };
+
+  const statsCards = [
     {
       title: "총 사용자",
-      value: "12,847",
-      change: "+12.5%",
-      trend: "up",
+      value: stats.totalUsers.toLocaleString(),
+      change: `${stats.userChange >= 0 ? '+' : ''}${stats.userChange}%`,
+      trend: stats.userChange >= 0 ? "up" : "down",
       icon: Users,
       color: "cyan"
     },
     {
       title: "오늘 입금",
-      value: "₩284.5M",
-      change: "+8.2%",
-      trend: "up",
+      value: formatCurrency(stats.todayDeposits),
+      change: `${stats.depositChange >= 0 ? '+' : ''}${stats.depositChange}%`,
+      trend: stats.depositChange >= 0 ? "up" : "down",
       icon: TrendingUp,
       color: "green"
     },
     {
       title: "오늘 출금",
-      value: "₩156.2M",
-      change: "-3.1%",
-      trend: "down",
+      value: formatCurrency(stats.todayWithdrawals),
+      change: `${stats.withdrawalChange >= 0 ? '+' : ''}${stats.withdrawalChange}%`,
+      trend: stats.withdrawalChange >= 0 ? "up" : "down",
       icon: TrendingDown,
       color: "purple"
     },
     {
       title: "대기 승인",
-      value: "47",
+      value: stats.pendingApprovals.toString(),
       change: "처리 필요",
       trend: "warning",
       icon: AlertTriangle,
@@ -38,18 +323,20 @@ export function Dashboard() {
     }
   ];
 
-  const recentTransactions = [
-    { id: "TX001", user: "user_1234", type: "입금", coin: "BTC", amount: "0.5", status: "confirmed", time: "2분 전" },
-    { id: "TX002", user: "user_5678", type: "출금", coin: "ETH", amount: "2.3", status: "pending", time: "5분 전" },
-    { id: "TX003", user: "user_9012", type: "입금", coin: "USDT", amount: "10,000", status: "confirmed", time: "12분 전" },
-    { id: "TX004", user: "user_3456", type: "출금", coin: "BTC", amount: "0.15", status: "processing", time: "18분 전" },
-    { id: "TX005", user: "user_7890", type: "입금", coin: "ETH", amount: "5.2", status: "confirmed", time: "25분 전" },
-  ];
+  const hotWalletPercentage = walletStatus.total > 0 
+    ? Math.round((walletStatus.hotWallet / walletStatus.total) * 100) 
+    : 0;
+  const coldWalletPercentage = walletStatus.total > 0 
+    ? Math.round((walletStatus.coldWallet / walletStatus.total) * 100) 
+    : 0;
 
-  const walletStatus = [
-    { type: "Hot Wallet", balance: "₩1.2B", percentage: 15, color: "from-orange-500 to-red-500" },
-    { type: "Cold Wallet", balance: "₩6.8B", percentage: 85, color: "from-cyan-500 to-blue-500" },
-  ];
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-400"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -60,7 +347,7 @@ export function Dashboard() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, index) => (
+        {statsCards.map((stat, index) => (
           <StatCard key={index} {...stat} />
         ))}
       </div>
@@ -86,36 +373,36 @@ export function Dashboard() {
               >
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    tx.type === "입금" 
+                    tx.type === "deposit" 
                       ? "bg-green-500/20 text-green-400" 
                       : "bg-purple-500/20 text-purple-400"
                   }`}>
-                    {tx.coin}
+                    {tx.coin_type}
                   </div>
                   <div>
-                    <p className="text-slate-300 text-sm">{tx.user}</p>
+                    <p className="text-slate-300 text-sm">{tx.user.username}</p>
                     <p className="text-slate-500 text-xs">{tx.id}</p>
                   </div>
                 </div>
 
                 <div className="text-right">
                   <p className={`text-sm ${
-                    tx.type === "입금" ? "text-green-400" : "text-purple-400"
+                    tx.type === "deposit" ? "text-green-400" : "text-purple-400"
                   }`}>
-                    {tx.type === "입금" ? "+" : "-"}{tx.amount} {tx.coin}
+                    {tx.type === "deposit" ? "+" : "-"}{formatAmount(tx.amount)} {tx.coin_type}
                   </p>
-                  <p className="text-slate-500 text-xs">{tx.time}</p>
+                  <p className="text-slate-500 text-xs">{getTimeAgo(tx.created_at)}</p>
                 </div>
 
                 <div>
                   <span className={`px-3 py-1 rounded-full text-xs ${
-                    tx.status === "confirmed"
+                    tx.status === "confirmed" || tx.status === "completed"
                       ? "bg-green-500/20 text-green-400 border border-green-500/30"
                       : tx.status === "pending"
                       ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                       : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
                   }`}>
-                    {tx.status === "confirmed" ? "완료" : tx.status === "pending" ? "대기" : "처리중"}
+                    {getStatusLabel(tx.status)}
                   </span>
                 </div>
               </div>
@@ -131,15 +418,18 @@ export function Dashboard() {
           </div>
 
           <div className="space-y-6">
-            {walletStatus.map((wallet, index) => (
+            {[
+              { type: "Hot Wallet", balance: walletStatus.hotWallet, percentage: hotWalletPercentage },
+              { type: "Cold Wallet", balance: walletStatus.coldWallet, percentage: coldWalletPercentage }
+            ].map((wallet, index) => (
               <div key={index}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-slate-400 text-sm">{wallet.type}</span>
-                  <span className="text-slate-200">{wallet.balance}</span>
+                  <span className="text-slate-200">{formatCurrency(wallet.balance)}</span>
                 </div>
                 <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden">
                   <div
-                    className={`absolute inset-y-0 left-0 bg-gradient-to-r ${wallet.color} rounded-full shadow-lg`}
+                    className={`absolute inset-y-0 left-0 bg-gradient-to-r ${wallet.type === "Hot Wallet" ? "from-orange-500 to-red-500" : "from-cyan-500 to-blue-500"} rounded-full shadow-lg`}
                     style={{ width: `${wallet.percentage}%` }}
                   ></div>
                 </div>
@@ -150,7 +440,7 @@ export function Dashboard() {
             <div className="pt-4 border-t border-slate-700/50">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-400">총 보유액</span>
-                <span className="text-cyan-400">₩8.0B</span>
+                <span className="text-cyan-400">{formatCurrency(walletStatus.total)}</span>
               </div>
             </div>
 

@@ -26,16 +26,30 @@ app.use(
   }),
 );
 
-// Health check endpoint
+// Health check endpoints (인증 불필요) - 먼저 정의
+app.get("/health", (c) => {
+  return c.json({ 
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    service: "make-server-b6d5667f",
+    version: "1.0.0"
+  });
+});
+
 app.get("/make-server-b6d5667f/health", (c) => {
-  return c.json({ status: "ok" });
+  return c.json({ 
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    service: "make-server-b6d5667f",
+    version: "1.0.0"
+  });
 });
 
 // =====================================================
 // Wallet API
 // =====================================================
 
-// POST /api/wallet/create - 새 지갑 주소 생성
+// POST /api/wallet/create - 새 지갑 주소 생성 (EOA)
 app.post("/make-server-b6d5667f/api/wallet/create", async (c) => {
   try {
     const body = await c.req.json();
@@ -45,18 +59,63 @@ app.post("/make-server-b6d5667f/api/wallet/create", async (c) => {
       return c.json({ error: 'user_id and coin_type are required' }, 400);
     }
 
-    // 지갑 주소 생성 (실제로는 블록체인 연동 필요)
-    const address = `${coin_type}_${crypto.randomUUID().substring(0, 8)}`;
+    // ethers를 사용한 실제 EOA 생성
+    const { ethers } = await import('npm:ethers@5.7.2');
+    const wallet = ethers.Wallet.createRandom();
+
+    // Private Key 암호화 (AES-256-GCM)
+    const encryptionKey = Deno.env.get('WALLET_ENCRYPTION_KEY') || 'default-encryption-key-change-in-production';
+    const crypto = globalThis.crypto;
+    const encoder = new TextEncoder();
+    
+    // Key derivation
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(encryptionKey),
+      'PBKDF2',
+      false,
+      ['deriveBits', 'deriveKey']
+    );
+    
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: 100000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    
+    // Encrypt private key
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encryptedPrivateKey = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv: iv },
+      key,
+      encoder.encode(wallet.privateKey)
+    );
+    
+    // Store as base64
+    const encryptedData = {
+      encrypted: btoa(String.fromCharCode(...new Uint8Array(encryptedPrivateKey))),
+      iv: btoa(String.fromCharCode(...iv)),
+      salt: btoa(String.fromCharCode(...salt))
+    };
 
     const { data, error } = await supabase
       .from('wallets')
       .insert({
         user_id,
         coin_type,
-        address,
+        address: wallet.address,
         balance: 0,
         status: 'active',
-        wallet_type
+        wallet_type,
+        encrypted_private_key: JSON.stringify(encryptedData)
       })
       .select()
       .single();
@@ -66,7 +125,10 @@ app.post("/make-server-b6d5667f/api/wallet/create", async (c) => {
       return c.json({ error: error.message }, 500);
     }
 
-    return c.json({ success: true, wallet: data });
+    // Private key는 응답에 포함하지 않음
+    const { encrypted_private_key, ...walletData } = data;
+
+    return c.json({ success: true, wallet: walletData });
   } catch (error) {
     console.error('Wallet creation error:', error);
     return c.json({ error: error.message || 'Internal server error' }, 500);
@@ -586,6 +648,306 @@ app.get("/make-server-b6d5667f/api/admin/dashboard/stats", async (c) => {
     });
   } catch (error) {
     console.error('Dashboard stats query error:', error);
+    return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
+// =====================================================
+// Biconomy Supertransaction API (Backend Proxy)
+// =====================================================
+
+// Helper function to decrypt private key
+async function decryptPrivateKey(encryptedData: string): Promise<string> {
+  const encryptionKey = Deno.env.get('WALLET_ENCRYPTION_KEY') || 'default-encryption-key-change-in-production';
+  const crypto = globalThis.crypto;
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  
+  const data = JSON.parse(encryptedData);
+  
+  // Convert base64 to Uint8Array
+  const encrypted = Uint8Array.from(atob(data.encrypted), c => c.charCodeAt(0));
+  const iv = Uint8Array.from(atob(data.iv), c => c.charCodeAt(0));
+  const salt = Uint8Array.from(atob(data.salt), c => c.charCodeAt(0));
+  
+  // Key derivation
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(encryptionKey),
+    'PBKDF2',
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+  
+  // Decrypt
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    encrypted
+  );
+  
+  return decoder.decode(decrypted);
+}
+
+// POST /api/biconomy/compose - Biconomy Compose API 호출
+app.post("/make-server-b6d5667f/api/biconomy/compose", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { chainId, from, steps, gasPayment } = body;
+
+    if (!chainId || !from || !steps) {
+      return c.json({ error: 'chainId, from, and steps are required' }, 400);
+    }
+
+    const BICONOMY_API_KEY = Deno.env.get('BICONOMY_API_KEY');
+    const BICONOMY_API_URL = Deno.env.get('BICONOMY_API_URL') || 'https://supertransaction.biconomy.io/api/v1';
+
+    if (!BICONOMY_API_KEY) {
+      return c.json({ error: 'Biconomy API key not configured' }, 500);
+    }
+
+    // Biconomy API 호출
+    const response = await fetch(`${BICONOMY_API_URL}/compose`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': BICONOMY_API_KEY,
+      },
+      body: JSON.stringify({
+        chainId,
+        from,
+        steps,
+        gasPayment: gasPayment || { sponsor: false }
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Biconomy compose error:', error);
+      return c.json({ error: error.message || 'Compose failed' }, response.status);
+    }
+
+    const result = await response.json();
+    return c.json({ success: true, ...result });
+
+  } catch (error) {
+    console.error('Biconomy compose error:', error);
+    return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
+// POST /api/biconomy/sign-and-execute - 서명 및 실행 (Backend에서 처리)
+app.post("/make-server-b6d5667f/api/biconomy/sign-and-execute", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { wallet_id, payload } = body;
+
+    if (!wallet_id || !payload) {
+      return c.json({ error: 'wallet_id and payload are required' }, 400);
+    }
+
+    // 지갑 정보 조회 (encrypted private key 포함)
+    const { data: walletData, error: walletError } = await supabase
+      .from('wallets')
+      .select('address, encrypted_private_key')
+      .eq('wallet_id', wallet_id)
+      .single();
+
+    if (walletError || !walletData) {
+      return c.json({ error: 'Wallet not found' }, 404);
+    }
+
+    // Private key 복호화
+    const privateKey = await decryptPrivateKey(walletData.encrypted_private_key);
+
+    // ethers로 서명
+    const { ethers } = await import('npm:ethers@5.7.2');
+    const wallet = new ethers.Wallet(privateKey);
+    
+    // Payload를 JSON 문자열로 변환하고 서명
+    const message = JSON.stringify(payload);
+    const signature = await wallet.signMessage(message);
+
+    // Biconomy Execute API 호출
+    const BICONOMY_API_KEY = Deno.env.get('BICONOMY_API_KEY');
+    const BICONOMY_API_URL = Deno.env.get('BICONOMY_API_URL') || 'https://supertransaction.biconomy.io/api/v1';
+
+    const response = await fetch(`${BICONOMY_API_URL}/execute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': BICONOMY_API_KEY,
+      },
+      body: JSON.stringify({
+        payload,
+        signature,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Biconomy execute error:', error);
+      return c.json({ error: error.message || 'Execute failed' }, response.status);
+    }
+
+    const result = await response.json();
+    return c.json({ success: true, ...result });
+
+  } catch (error) {
+    console.error('Biconomy sign and execute error:', error);
+    return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
+// POST /api/biconomy/transfer - 전체 프로세스 처리 (Compose + Sign + Execute)
+app.post("/make-server-b6d5667f/api/biconomy/transfer", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { chainId, from, to, token, amount, gasPayment } = body;
+
+    if (!chainId || !from || !to || !token || !amount) {
+      return c.json({ error: 'Missing required fields: chainId, from, to, token, amount' }, 400);
+    }
+
+    const BICONOMY_API_KEY = Deno.env.get('BICONOMY_API_KEY');
+    const BICONOMY_API_URL = Deno.env.get('BICONOMY_API_URL') || 'https://supertransaction.biconomy.io/api/v1';
+
+    if (!BICONOMY_API_KEY) {
+      return c.json({ error: 'Biconomy API key not configured' }, 500);
+    }
+
+    console.log('🚀 Transfer Request:', { chainId, from, to, token, amount });
+
+    // 관리자 지갑 조회 및 잔액 확인
+    const { data: adminWalletData, error: adminWalletError } = await supabase
+      .from('wallets')
+      .select('wallet_id, address, balance')
+      .eq('address', from)
+      .single();
+
+    if (adminWalletError || !adminWalletData) {
+      console.error('❌ Admin wallet not found:', from);
+      return c.json({ error: '관리자 지갑을 찾을 수 없습니다. 지갑 주소를 확인해주세요.' }, 404);
+    }
+
+    // 잔액 확인 (보낼 수량 + 예상 가스비)
+    const requestedAmount = parseFloat(amount);
+    const currentBalance = parseFloat(adminWalletData.balance);
+    const estimatedGasFee = 0.01; // 예상 가스비 (실제로는 API에서 견적을 받아야 함)
+    const totalRequired = requestedAmount + estimatedGasFee;
+
+    console.log('💰 Balance Check:', {
+      currentBalance,
+      requestedAmount,
+      estimatedGasFee,
+      totalRequired
+    });
+
+    if (currentBalance < totalRequired) {
+      const shortage = totalRequired - currentBalance;
+      console.error('❌ Insufficient balance:', { currentBalance, totalRequired, shortage });
+      return c.json({ 
+        error: `관리자 지갑의 ${token} 잔액이 부족합니다.\n\n필요: ${totalRequired.toFixed(8)} ${token}\n보유: ${currentBalance.toFixed(8)} ${token}\n부족: ${shortage.toFixed(8)} ${token}\n\n관리자 지갑에 ${token}을 충전한 후 다시 시도해주세요.`,
+        code: 'INSUFFICIENT_BALANCE',
+        details: {
+          required: totalRequired,
+          available: currentBalance,
+          shortage: shortage,
+          token: token
+        }
+      }, 400);
+    }
+
+    // ========================================
+    // 🎯 MOCK 구현: 실제 블록체인 전송 시뮬레이션
+    // ========================================
+    // 프로덕션 환경에서는:
+    // 1. Biconomy Smart Account SDK 사용
+    // 2. Private Key를 안전하게 암호화하여 저장
+    // 3. 실제 블록체인 트랜잭션 실행
+    // ========================================
+
+    console.log('✅ Mock Transfer: Simulating blockchain transaction...');
+    
+    // Mock TX Hash 생성 (실제로는 블록체인에서 받음)
+    const mockTxHash = '0x' + Array.from(
+      { length: 64 }, 
+      () => Math.floor(Math.random() * 16).toString(16)
+    ).join('');
+
+    console.log('✅ Mock Transfer Success:', {
+      from,
+      to,
+      token,
+      amount,
+      txHash: mockTxHash
+    });
+
+    // 관리자 지갑 잔액 차감 (Mock)
+    const newAdminBalance = currentBalance - requestedAmount - estimatedGasFee;
+    await supabase
+      .from('wallets')
+      .update({ balance: newAdminBalance })
+      .eq('wallet_id', adminWalletData.wallet_id);
+
+    console.log('💰 Admin balance updated:', {
+      before: currentBalance,
+      after: newAdminBalance
+    });
+
+    return c.json({
+      success: true,
+      txHash: mockTxHash,
+      quote: {
+        gasCost: `${estimatedGasFee} ${token}`,
+        estimatedTime: '~5 seconds'
+      },
+      note: 'Mock transaction - replace with real Biconomy integration in production'
+    });
+
+  } catch (error: any) {
+    console.error('❌ Transfer error:', error);
+    return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/biconomy/status/:txHash - 트랜잭션 상태 조회
+app.get("/make-server-b6d5667f/api/biconomy/status/:txHash", async (c) => {
+  try {
+    const txHash = c.req.param('txHash');
+
+    const BICONOMY_API_KEY = Deno.env.get('BICONOMY_API_KEY');
+    const BICONOMY_API_URL = Deno.env.get('BICONOMY_API_URL') || 'https://supertransaction.biconomy.io/api/v1';
+
+    const response = await fetch(`${BICONOMY_API_URL}/status/${txHash}`, {
+      headers: {
+        'x-api-key': BICONOMY_API_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return c.json({ error: error.message || 'Status check failed' }, response.status);
+    }
+
+    const result = await response.json();
+    return c.json({ success: true, ...result });
+
+  } catch (error) {
+    console.error('Biconomy status check error:', error);
     return c.json({ error: error.message || 'Internal server error' }, 500);
   }
 });

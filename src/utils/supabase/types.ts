@@ -105,3 +105,17 @@ export interface IpWhitelist {
   created_at: string;
   created_by?: string;
 }
+
+// Notification Types
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: 'signup' | 'verification_request' | 'verification_approved' | 'verification_rejected' | 
+        'purchase_request' | 'purchase_approved' | 'purchase_rejected' | 'purchase_completed' |
+        'deposit' | 'withdrawal';
+  title: string;
+  message: string;
+  read: boolean;
+  data?: any;
+  created_at: string;
+}

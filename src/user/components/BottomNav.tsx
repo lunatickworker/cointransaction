@@ -20,9 +20,9 @@ export function BottomNav({ currentScreen, onNavigate }: BottomNavProps) {
           <span className="text-xs">홈</span>
         </button>
         <button
-          onClick={() => onNavigate('wallet')}
+          onClick={() => onNavigate('wallets')}
           className={`flex flex-col items-center gap-1 py-3 rounded-lg transition-all ${
-            currentScreen === 'wallet' ? 'text-cyan-400' : 'text-slate-400 hover:text-cyan-300'
+            currentScreen === 'wallets' || currentScreen === 'wallet-detail' ? 'text-cyan-400' : 'text-slate-400 hover:text-cyan-300'
           }`}
         >
           <Wallet className="w-5 h-5" />

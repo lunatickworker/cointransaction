@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '../utils/supabase/client';
-import bcrypt from 'bcryptjs';
 
 interface User {
   id: string;
@@ -24,43 +23,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // 로컬 스토리지에서 사용자 정보 복원
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (error) {
+        console.error('Error parsing saved user:', error);
+        localStorage.removeItem('user');
+      }
     }
     setIsLoading(false);
   }, []);
 
   const login = async (email: string, password: string) => {
     const currentPath = window.location.pathname;
-    const isAdminPage = currentPath.startsWith('/transaction');
+    const isAdminPage = currentPath.startsWith('/admin');
     
-    // DB에서 사용자 조회
-    const { data: users, error } = await supabase
+    // 1. 이메일로 사용자 조회
+    const { data: userData, error } = await supabase
       .from('users')
       .select('*')
       .eq('email', email)
-      .limit(1);
+      .maybeSingle();
 
-    if (error) throw new Error('로그인 실패');
-    
-    if (!users || users.length === 0) {
-      throw new Error('사용자를 찾을 수 없습니다');
+    if (error) {
+      console.error('Login error:', error);
+      throw new Error('로그인 중 오류가 발생했습니다');
     }
-    
-    const dbUser = users[0];
-    
-    // bcrypt로 비밀번호 검증
-    const isPasswordValid = await bcrypt.compare(password, dbUser.password_hash);
-    if (!isPasswordValid) {
-      throw new Error('비밀번호가 일치하지 않습니다');
+
+    if (!userData) {
+      throw new Error('등록되지 않은 이메일입니다');
     }
-    
+
+    // 2. 비밀번호 확인
+    if (userData.password_hash !== password) {
+      throw new Error('비밀번호가 올바르지 않습니다');
+    }
+
     const loggedInUser: User = {
-      id: dbUser.user_id,
-      email: dbUser.email,
-      username: dbUser.username,
-      role: dbUser.role || 'user'
+      id: userData.user_id,
+      email: userData.email,
+      username: userData.username,
+      role: userData.role || 'user'
     };
     
     // 역할 검증: 관리자 페이지에서는 관리자만 로그인 가능
@@ -75,8 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase
       .from('users')
       .update({ last_login: new Date().toISOString() })
-      .eq('user_id', dbUser.user_id);
+      .eq('user_id', userData.user_id);
     
+    console.log('Login successful:', loggedInUser);
     return loggedInUser;
   };
 

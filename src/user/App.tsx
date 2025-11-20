@@ -1,19 +1,24 @@
 import { useState, useEffect } from 'react';
 import { Home } from './components/Home';
+import { WalletList } from './components/WalletList';
 import { WalletDetail } from './components/WalletDetail';
 import { Deposit } from './components/Deposit';
 import { Withdrawal } from './components/Withdrawal';
 import { Transactions } from './components/Transactions';
 import { Swap } from './components/Swap';
 import { Settings } from './components/Settings';
+import { TransferRequest } from './components/TransferRequest';
+import { CoinPurchaseRequest } from './components/CoinPurchaseRequest';
+import { AccountVerification } from './components/AccountVerification';
 import { BottomNav } from './components/BottomNav';
 import { TopBar } from './components/TopBar';
 import { MobileLogin } from './components/MobileLogin';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../utils/supabase/client';
+import { preloadCoinRates } from './utils/helpers';
 
-export type Screen = 'home' | 'wallet' | 'deposit' | 'withdrawal' | 'swap' | 'transactions' | 'settings';
-export type CoinType = 'BTC' | 'ETH' | 'USDT' | 'USDC' | 'BNB';
+export type Screen = 'home' | 'wallets' | 'wallet-detail' | 'deposit' | 'withdrawal' | 'swap' | 'transactions' | 'settings' | 'transfer-request' | 'coin-purchase' | 'account-verification';
+export type CoinType = 'BTC' | 'ETH' | 'USDT' | 'USDC' | 'BNB' | 'KRWQ';
 
 export interface WalletData {
   wallet_id: string;
@@ -44,6 +49,7 @@ export function UserApp() {
     if (user && user.role === 'user') {
       fetchWallets();
       fetchTransactions();
+      preloadCoinRates();
     } else {
       setIsLoading(false);
     }
@@ -138,7 +144,14 @@ export function UserApp() {
               onSelectCoin={setSelectedCoin}
             />
           )}
-          {currentScreen === 'wallet' && (
+          {currentScreen === 'wallets' && (
+            <WalletList
+              wallets={wallets}
+              onNavigate={setCurrentScreen}
+              onSelectCoin={setSelectedCoin}
+            />
+          )}
+          {currentScreen === 'wallet-detail' && (
             <WalletDetail
               wallets={wallets}
               transactions={transactions}
@@ -165,7 +178,9 @@ export function UserApp() {
           {currentScreen === 'swap' && (
             <Swap
               wallets={wallets}
+              selectedCoin={selectedCoin}
               onNavigate={setCurrentScreen}
+              onSelectCoin={setSelectedCoin}
             />
           )}
           {currentScreen === 'transactions' && (
@@ -176,6 +191,25 @@ export function UserApp() {
           )}
           {currentScreen === 'settings' && (
             <Settings onNavigate={setCurrentScreen} />
+          )}
+          {currentScreen === 'transfer-request' && (
+            <TransferRequest
+              wallets={wallets}
+              selectedCoin={selectedCoin}
+              onNavigate={setCurrentScreen}
+              onSelectCoin={setSelectedCoin}
+            />
+          )}
+          {currentScreen === 'coin-purchase' && (
+            <CoinPurchaseRequest
+              wallets={wallets}
+              selectedCoin={selectedCoin}
+              onNavigate={setCurrentScreen}
+              onSelectCoin={setSelectedCoin}
+            />
+          )}
+          {currentScreen === 'account-verification' && (
+            <AccountVerification onNavigate={setCurrentScreen} />
           )}
         </div>
       </div>

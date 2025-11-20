@@ -1,55 +1,147 @@
 import { Shield, AlertTriangle, Activity, Globe, Lock, Eye } from "lucide-react";
 import { NeonCard } from "./NeonCard";
+import { useState, useEffect } from "react";
+import { supabase } from "../utils/supabase/client";
+import { toast } from "sonner@2.0.3";
+
+interface SecurityAlert {
+  log_id: string;
+  event_type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  created_at: string;
+  status: 'pending' | 'resolved' | 'monitoring' | 'blocked';
+}
+
+interface IPWhitelist {
+  whitelist_id: string;
+  ip_address: string;
+  label: string;
+  status: 'active' | 'inactive';
+  last_access: string;
+}
 
 export function SecurityMonitor() {
-  const securityAlerts = [
-    {
-      id: "SA001",
-      type: "suspicious",
-      severity: "high",
-      title: "의심스러운 출금 패턴 감지",
-      description: "user_5678이 비정상적으로 높은 금액(10 BTC)을 출금 요청했습니다.",
-      timestamp: "2024-11-11 14:30:22",
-      status: "pending"
-    },
-    {
-      id: "SA002",
-      type: "ip_whitelist",
-      severity: "medium",
-      title: "화이트리스트 외 IP 접근 시도",
-      description: "관리자 계정에 등록되지 않은 IP(192.168.1.100)에서 접근을 시도했습니다.",
-      timestamp: "2024-11-11 14:15:10",
-      status: "blocked"
-    },
-    {
-      id: "SA003",
-      type: "2fa_failure",
-      severity: "low",
-      title: "2FA 인증 실패",
-      description: "user_9012가 3회 연속 2FA 인증에 실패했습니다.",
-      timestamp: "2024-11-11 13:45:33",
-      status: "monitoring"
-    },
-    {
-      id: "SA004",
-      type: "withdrawal_limit",
-      severity: "high",
-      title: "일일 출금 한도 초과 시도",
-      description: "user_3456이 일일 한도(1.0 BTC)를 초과하는 출금(1.5 BTC)을 요청했습니다.",
-      timestamp: "2024-11-11 13:20:15",
-      status: "resolved"
-    }
-  ];
+  const [securityAlerts, setSecurityAlerts] = useState<SecurityAlert[]>([]);
+  const [ipWhitelist, setIPWhitelist] = useState<IPWhitelist[]>([]);
+  const [loading, setLoading] = useState(false); // 즉시 UI 표시
+  const [stats, setStats] = useState({
+    high: 0,
+    medium: 0,
+    resolved: 0,
+    activeIPs: 0
+  });
 
-  const ipWhitelist = [
-    { ip: "203.123.45.67", label: "본사 오피스", status: "active", lastAccess: "2024-11-11 14:30" },
-    { ip: "211.234.56.78", label: "데이터센터", status: "active", lastAccess: "2024-11-11 14:25" },
-    { ip: "192.168.1.1", label: "VPN 서버", status: "active", lastAccess: "2024-11-11 13:50" },
-    { ip: "175.123.89.90", label: "관리자 자택", status: "inactive", lastAccess: "2024-11-10 18:30" }
-  ];
+  useEffect(() => {
+    fetchData();
+
+    // 실시간 업데이트
+    const channel = supabase
+      .channel('security-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'security_logs' }, () => {
+        fetchSecurityAlerts();
+        fetchStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ip_whitelist' }, () => {
+        fetchIPWhitelist();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      await Promise.all([fetchSecurityAlerts(), fetchIPWhitelist(), fetchStats()]);
+    } catch (error) {
+      console.error('Security data fetch error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSecurityAlerts = async () => {
+    const { data, error } = await supabase
+      .from('security_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error('Security alerts fetch error:', error);
+      toast.error('보안 알림을 불러오는데 실패했습니다');
+      return;
+    }
+
+    setSecurityAlerts(data || []);
+  };
+
+  const fetchIPWhitelist = async () => {
+    const { data, error } = await supabase
+      .from('ip_whitelist')
+      .select('*')
+      .order('last_access', { ascending: false });
+
+    if (error) {
+      console.error('IP whitelist fetch error:', error);
+      return;
+    }
+
+    setIPWhitelist(data || []);
+  };
+
+  const fetchStats = async () => {
+    const { count: high } = await supabase
+      .from('security_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('severity', 'high')
+      .neq('status', 'resolved');
+
+    const { count: medium } = await supabase
+      .from('security_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('severity', 'medium')
+      .neq('status', 'resolved');
+
+    const { count: resolved } = await supabase
+      .from('security_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'resolved');
+
+    const { count: activeIPs } = await supabase
+      .from('ip_whitelist')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active');
+
+    setStats({
+      high: high || 0,
+      medium: medium || 0,
+      resolved: resolved || 0,
+      activeIPs: activeIPs || 0
+    });
+  };
+
+  const handleResolveAlert = async (logId: string) => {
+    const { error } = await supabase
+      .from('security_logs')
+      .update({ status: 'resolved' })
+      .eq('log_id', logId);
+
+    if (error) {
+      toast.error('알림을 해결하는데 실패했습니다');
+      return;
+    }
+
+    toast.success('보안 알림이 해결되었습니다');
+    fetchSecurityAlerts();
+    fetchStats();
+  };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
+      case "critical":
       case "high":
         return "bg-red-500/20 text-red-400 border-red-500/30";
       case "medium":
@@ -76,6 +168,34 @@ export function SecurityMonitor() {
     }
   };
 
+  const getSeverityLabel = (severity: string) => {
+    const map: { [key: string]: string } = {
+      'critical': '위급',
+      'high': '높음',
+      'medium': '중간',
+      'low': '낮음'
+    };
+    return map[severity] || severity;
+  };
+
+  const getStatusLabel = (status: string) => {
+    const map: { [key: string]: string } = {
+      'pending': '대기중',
+      'blocked': '차단됨',
+      'resolved': '해결됨',
+      'monitoring': '모니터링'
+    };
+    return map[status] || status;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-400"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -95,7 +215,7 @@ export function SecurityMonitor() {
           <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <AlertTriangle className="w-5 h-5 text-red-400" />
-              <span className="text-red-400 text-2xl">2</span>
+              <span className="text-red-400 text-2xl">{stats.high}</span>
             </div>
             <p className="text-slate-400 text-sm">높은 위험도</p>
           </div>
@@ -106,7 +226,7 @@ export function SecurityMonitor() {
           <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <Eye className="w-5 h-5 text-amber-400" />
-              <span className="text-amber-400 text-2xl">1</span>
+              <span className="text-amber-400 text-2xl">{stats.medium}</span>
             </div>
             <p className="text-slate-400 text-sm">중간 위험도</p>
           </div>
@@ -117,7 +237,7 @@ export function SecurityMonitor() {
           <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <Shield className="w-5 h-5 text-green-400" />
-              <span className="text-green-400 text-2xl">1</span>
+              <span className="text-green-400 text-2xl">{stats.resolved}</span>
             </div>
             <p className="text-slate-400 text-sm">해결됨</p>
           </div>
@@ -128,7 +248,7 @@ export function SecurityMonitor() {
           <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <Activity className="w-5 h-5 text-cyan-400" />
-              <span className="text-cyan-400 text-2xl">4</span>
+              <span className="text-cyan-400 text-2xl">{stats.activeIPs}</span>
             </div>
             <p className="text-slate-400 text-sm">활성 IP</p>
           </div>
@@ -144,33 +264,34 @@ export function SecurityMonitor() {
           </h3>
 
           {securityAlerts.map((alert) => (
-            <NeonCard key={alert.id}>
+            <NeonCard key={alert.log_id}>
               <div className="space-y-3">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-1 rounded-full text-xs border ${getSeverityColor(alert.severity)}`}>
-                        {alert.severity === "high" ? "높음" : alert.severity === "medium" ? "중간" : "낮음"}
+                        {getSeverityLabel(alert.severity)}
                       </span>
                       <span className={`px-2 py-1 rounded-full text-xs border ${getStatusColor(alert.status)}`}>
-                        {alert.status === "pending" ? "대기중" : 
-                         alert.status === "blocked" ? "차단됨" :
-                         alert.status === "resolved" ? "해결됨" : "모니터링"}
+                        {getStatusLabel(alert.status)}
                       </span>
                     </div>
-                    <h4 className="text-slate-200 mb-1">{alert.title}</h4>
+                    <h4 className="text-slate-200 mb-1">{alert.event_type}</h4>
                     <p className="text-slate-400 text-sm">{alert.description}</p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-3 border-t border-slate-700/50">
-                  <span className="text-slate-500 text-xs">{alert.timestamp}</span>
+                  <span className="text-slate-500 text-xs">{alert.created_at}</span>
                   <div className="flex items-center gap-2">
                     <button className="px-3 py-1 rounded-lg bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/30 transition-all text-xs">
                       상세보기
                     </button>
                     {alert.status === "pending" && (
-                      <button className="px-3 py-1 rounded-lg bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30 transition-all text-xs">
+                      <button
+                        className="px-3 py-1 rounded-lg bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30 transition-all text-xs"
+                        onClick={() => handleResolveAlert(alert.log_id)}
+                      >
                         해결
                       </button>
                     )}
@@ -209,12 +330,12 @@ export function SecurityMonitor() {
                       <div className={`w-2 h-2 rounded-full ${
                         ip.status === "active" ? "bg-green-400 animate-pulse" : "bg-slate-500"
                       }`}></div>
-                      <code className="text-cyan-400 text-sm">{ip.ip}</code>
+                      <code className="text-cyan-400 text-sm">{ip.ip_address}</code>
                     </div>
                     <Lock className="w-4 h-4 text-slate-500" />
                   </div>
                   <p className="text-slate-400 text-xs mb-1">{ip.label}</p>
-                  <p className="text-slate-500 text-xs">마지막 접근: {ip.lastAccess}</p>
+                  <p className="text-slate-500 text-xs">마지막 접근: {ip.last_access}</p>
                 </div>
               ))}
             </div>

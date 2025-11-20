@@ -1,5 +1,4 @@
-import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Users, Shield, Wallet, Activity, Repeat } from "lucide-react";
-import { useNavigate } from 'react-router-dom';
+import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Shield, Repeat, Zap, Coins, CheckCircle, ShoppingCart, Activity, Users } from "lucide-react";
 
 interface SidebarProps {
   activeTab: string;
@@ -7,15 +6,15 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
-  const navigate = useNavigate();
   
   const menuItems = [
     { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
-    { id: "withdrawals", label: "출금 관리", icon: ArrowUpFromLine },
-    { id: "deposits", label: "입금 관리", icon: ArrowDownToLine },
+    { id: "users-wallets", label: "사용자 & 지갑", icon: Users },
+    { id: "deposit-withdrawal", label: "구매 요청 관리", icon: ShoppingCart },
     { id: "swaps", label: "스왑 관리", icon: Repeat },
-    { id: "users", label: "사용자 관리", icon: Users },
-    { id: "wallets", label: "지갑 관리", icon: Wallet },
+    { id: "account-verifications", label: "계좌인증 관리", icon: CheckCircle },
+    { id: "coins", label: "코인 관리", icon: Coins },
+    { id: "gas-policy", label: "가스비 정책", icon: Zap },
     { id: "security", label: "보안 모니터", icon: Shield },
   ];
 
@@ -23,7 +22,10 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     <aside className="w-64 bg-slate-900/50 backdrop-blur-xl border-r border-cyan-500/20">
       <div className="p-6">
         <button 
-          onClick={() => navigate('/')}
+          onClick={() => {
+            window.location.hash = '#';
+            window.location.reload();
+          }}
           className="flex items-center gap-3 mb-8 group w-full hover:scale-105 transition-transform"
         >
           <div 
@@ -33,7 +35,7 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             <Activity className="w-6 h-6 text-cyan-400" style={{ filter: 'drop-shadow(0 0 3px rgba(6, 182, 212, 1))' }} />
           </div>
           <div>
-            <h1 className="text-cyan-400 group-hover:text-cyan-300 transition-colors">Admin Panel</h1>
+            <h1 className="text-cyan-400 group-hover:text-cyan-300 transition-colors">GMS</h1>
             <p className="text-slate-400 text-xs">Crypto Management</p>
           </div>
         </button>

@@ -1,11 +1,13 @@
-import { useState, useRef } from 'react';
-import { ChevronRight, QrCode, Camera } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Send, AlertCircle, Loader2, CheckCircle2, Zap, Info, Wallet as WalletIcon, Crown } from 'lucide-react';
 import { Screen, WalletData, CoinType } from '../App';
-import { getCoinRate } from '../utils/helpers';
-import { toast } from 'sonner@2.0.3';
-import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../utils/supabase/client';
-import jsQR from 'jsqr';
+import { useAuth } from '../../contexts/AuthContext';
+import { toast } from 'sonner@2.0.3';
+import { useWallet } from '../../hooks/useWallet';
+import { biconomyClient } from '../../utils/biconomy/client';
+import { getGasPolicyForUser, getGasPolicyDescription, getLevelBadgeColor, GasPaymentConfig } from '../../utils/biconomy/gasPolicy';
+import { composeBiconomyTransaction, checkBiconomyAvailability } from '../../utils/api/biconomy';
 
 interface WithdrawalProps {
   wallets: WalletData[];
@@ -14,253 +16,492 @@ interface WithdrawalProps {
   onSelectCoin: (coin: CoinType) => void;
 }
 
-export function Withdrawal({ wallets, selectedCoin, onNavigate }: WithdrawalProps) {
+interface GasQuote {
+  gasCost: string;
+  estimatedTime: string;
+  network: string;
+}
+
+export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: WithdrawalProps) {
   const { user } = useAuth();
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const wallet = wallets.find(w => w.coin_type === selectedCoin);
+  const [isLoading, setIsLoading] = useState(false);
+  const [gasQuote, setGasQuote] = useState<GasQuote | null>(null);
+  const [isCalculatingGas, setIsCalculatingGas] = useState(false);
+  const [recentWithdrawals, setRecentWithdrawals] = useState<any[]>([]);
+  // 스마트 거래는 항상 활성화 (토글 제거)
+  const useSupertransaction = true;
+  const [gasPaymentConfig, setGasPaymentConfig] = useState<GasPaymentConfig | null>(null);
+  const [userLevel, setUserLevel] = useState<string>('Basic');
+  const [coins, setCoins] = useState<CoinType[]>([]);
 
-  const networkFee = 0.0001; // 네트워크 수수료
+  // 지갑이 있는 코인만 표시
+  useEffect(() => {
+    const fetchActiveCoins = async () => {
+      const { data, error } = await supabase
+        .from('supported_tokens')
+        .select('symbol')
+        .eq('is_active', true)
+        .order('symbol');
 
-  const validateAddress = (address: string): boolean => {
-    if (!address || address.length < 26) return false;
-    
-    // 간단한 주소 형식 검증
-    const addressPatterns: Record<CoinType, RegExp> = {
-      BTC: /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$|^bc1[a-z0-9]{39,59}$/,
-      ETH: /^0x[a-fA-F0-9]{40}$/,
-      USDT: /^0x[a-fA-F0-9]{40}$/,
-      USDC: /^0x[a-fA-F0-9]{40}$/,
-      BNB: /^0x[a-fA-F0-9]{40}$/,
+      if (data && !error) {
+        // 지갑이 있는 코인만 필터링
+        const walletCoins = wallets.map(w => w.coin_type);
+        const activeCoins = data
+          .map(token => token.symbol as CoinType)
+          .filter(coin => walletCoins.includes(coin));
+        
+        setCoins(activeCoins);
+      }
     };
 
-    return addressPatterns[selectedCoin]?.test(address) || false;
-  };
+    fetchActiveCoins();
+  }, [wallets]);
 
-  const handleQRScan = async () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
+  const selectedWallet = wallets.find(w => w.coin_type === selectedCoin);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // 사용자 레벨 및 가스비 정책 로드
+  useEffect(() => {
+    const loadGasPolicy = async () => {
+      if (!user) return;
 
-    try {
-      const img = new Image();
-      const reader = new FileReader();
+      try {
+        const policy = await getGasPolicyForUser(user.id);
+        setGasPaymentConfig(policy);
 
-      reader.onload = (event) => {
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
+        // 사용자 레벨 가져오기
+        const { data: userData } = await supabase
+          .from('users')
+          .select('level')
+          .eq('user_id', user.id)
+          .single();
 
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
+        if (userData) {
+          setUserLevel(userData.level || 'Basic');
+        }
+      } catch (error) {
+        console.error('Gas policy load error:', error);
+      }
+    };
 
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
+    loadGasPolicy();
+  }, [user]);
 
-          if (code && code.data) {
-            // QR 코드에서 주소 추출 (bitcoin:, ethereum: 등의 프로토콜 제거)
-            let address = code.data;
-            if (address.includes(':')) {
-              address = address.split(':')[1].split('?')[0];
+  // 실시간 출금 내역 업데이트
+  useEffect(() => {
+    const fetchRecentWithdrawals = async () => {
+      const { data } = await supabase
+        .from('withdrawals')
+        .select('*')
+        .eq('user_id', user?.id)
+        .eq('coin_type', selectedCoin)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (data) {
+        setRecentWithdrawals(data);
+      }
+    };
+
+    fetchRecentWithdrawals();
+
+    // 실시간 업데이트
+    const channel = supabase
+      .channel('withdrawal-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'withdrawals',
+          filter: `user_id=eq.${user?.id}`
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            toast.success('출금 요청이 접수되었습니다');
+          } else if (payload.eventType === 'UPDATE') {
+            const status = (payload.new as any).status;
+            if (status === 'completed') {
+              toast.success('출금이 완료되었습니다!');
+            } else if (status === 'rejected') {
+              toast.error('출금이 거부되었습니다');
             }
-            setToAddress(address);
-            toast.success('QR 코드에서 주소를 읽었습니다');
-          } else {
-            toast.error('QR 코드를 인식할 수 없습니다');
           }
-        };
-        img.src = event.target?.result as string;
-      };
+          fetchRecentWithdrawals();
+        }
+      )
+      .subscribe();
 
-      reader.readAsDataURL(file);
-    } catch (error) {
-      console.error('QR scan error:', error);
-      toast.error('QR 코드 스캔에 실패했습니다');
-    }
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, selectedCoin]);
+
+  // 가스비 견적 계산
+  useEffect(() => {
+    const calculateGas = async () => {
+      if (!toAddress || !amount || parseFloat(amount) <= 0) {
+        setGasQuote(null);
+        return;
+      }
+
+      setIsCalculatingGas(true);
+
+      // 시뮬레이션 - 실제로는 Biconomy Supertransaction API 호출
+      setTimeout(() => {
+        setGasQuote({
+          gasCost: (Math.random() * 5 + 0.5).toFixed(2) + ' USDT',
+          estimatedTime: '~' + (Math.floor(Math.random() * 20) + 10) + ' 초',
+          network: selectedCoin === 'BTC' ? 'Bitcoin' : 'Ethereum'
+        });
+        setIsCalculatingGas(false);
+      }, 1000);
+    };
+
+    const debounce = setTimeout(() => {
+      calculateGas();
+    }, 500);
+
+    return () => clearTimeout(debounce);
+  }, [toAddress, amount, selectedCoin]);
 
   const handleMaxAmount = () => {
-    if (!wallet) return;
-    // 수수료를 제외한 최대 금액
-    const maxAmount = Math.max(0, wallet.balance - networkFee);
-    setAmount(maxAmount.toFixed(8));
+    if (selectedWallet) {
+      setAmount(selectedWallet.balance.toString());
+    }
   };
 
-  const calculateReceivedAmount = (): number => {
-    const amountNum = parseFloat(amount || '0');
-    return Math.max(0, amountNum - networkFee);
-  };
 
-  const handleSubmit = async () => {
-    // 유효성 검증
-    if (!toAddress) {
-      toast.error('받는 주소를 입력해주세요');
-      return;
-    }
 
-    if (!validateAddress(toAddress)) {
-      toast.error('올바른 주소 형식이 아닙니다');
-      return;
-    }
-
-    if (!amount || parseFloat(amount) <= 0) {
-      toast.error('출금 수량을 입력해주세요');
+  const handleWithdraw = async () => {
+    if (!selectedWallet || !toAddress || !amount) {
+      toast.error('모든 필드를 입력해주세요');
       return;
     }
 
     const amountNum = parseFloat(amount);
-    if (!wallet || amountNum > wallet.balance) {
-      toast.error('출금 가능 금액을 초과했습니다');
+    if (amountNum <= 0) {
+      toast.error('유효한 금액을 입력해주세요');
       return;
     }
 
-    if (amountNum < 0.0001) {
-      toast.error('최소 출금 금액은 0.0001입니다');
+    if (amountNum > selectedWallet.balance) {
+      toast.error('잔액이 부족합니다');
       return;
     }
 
-    setIsSubmitting(true);
+    setIsLoading(true);
 
     try {
-      // Supabase에 출금 신청 저장
-      const { data, error } = await supabase
-        .from('withdrawals')
-        .insert({
-          user_id: user?.id,
-          coin_type: selectedCoin,
-          to_address: toAddress,
-          amount: amount,
-          network_fee: networkFee.toString(),
-          status: 'pending',
-          tx_hash: null,
-        })
-        .select()
-        .single();
+      if (useSupertransaction) {
+        // Biconomy 사용 가능 여부 확인
+        const availability = await checkBiconomyAvailability();
+        if (!availability.available) {
+          toast.error(availability.message);
+          setIsLoading(false);
+          return;
+        }
 
-      if (error) throw error;
+        // Supertransaction API 사용
+        // 1. Compose
+        const { payload, quote } = await composeBiconomyTransaction({
+          chainId: 8453, // Base
+          from: selectedWallet.address,
+          steps: [
+            {
+              type: 'transfer',
+              token: selectedCoin,
+              to: toAddress,
+              amount: amount
+            }
+          ],
+          gasPayment: gasPaymentConfig || { sponsor: false, token: 'USDC' }
+        });
 
-      toast.success('출금 신청이 완료되었습니다');
+        // 2. DB에 출금 요청 저장 (pending 상태)
+        const { error: insertError } = await supabase
+          .from('withdrawals')
+          .insert({
+            user_id: user?.id,
+            wallet_id: selectedWallet.wallet_id,
+            coin_type: selectedCoin,
+            amount: amount,
+            to_address: toAddress,
+            status: 'pending',
+            supertransaction_payload: payload,
+            gas_quote: quote
+          });
+
+        if (insertError) throw insertError;
+
+        toast.success('출금 요청이 제출되었습니다. 관리자 승인 후 처리됩니다.');
+      } else {
+        // 일반 출금
+        const { error } = await supabase
+          .from('withdrawals')
+          .insert({
+            user_id: user?.id,
+            wallet_id: selectedWallet.wallet_id,
+            coin_type: selectedCoin,
+            amount: amount,
+            to_address: toAddress,
+            status: 'pending'
+          });
+
+        if (error) throw error;
+        toast.success('출금 요청이 제출되었습니다');
+      }
+
+      // 초기화
       setToAddress('');
       setAmount('');
-      
-      // 잠시 후 홈으로 이동
-      setTimeout(() => {
-        onNavigate('home');
-      }, 1500);
-    } catch (error) {
+      setGasQuote(null);
+    } catch (error: any) {
       console.error('Withdrawal error:', error);
-      toast.error('출금 신청에 실패했습니다');
+      toast.error(error.message || '출금 요청 중 오류가 발생했습니다');
     } finally {
-      setIsSubmitting(false);
+      setIsLoading(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      <button 
-        onClick={() => onNavigate('home')} 
-        className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
-        style={{ filter: 'drop-shadow(0 0 3px rgba(6, 182, 212, 0.5))' }}
-      >
-        <ChevronRight className="w-4 h-4 rotate-180" />
-        <span>뒤로</span>
-      </button>
-
-      <h2 className="text-2xl text-white">{selectedCoin} 출금</h2>
-
-      <div 
-        className="bg-slate-800/50 border border-cyan-500/30 rounded-xl p-4"
-        style={{ boxShadow: '0 0 15px rgba(6, 182, 212, 0.1)' }}
-      >
-        <div className="text-slate-400 text-sm">출금 가능</div>
-        <div className="text-white text-xl">
-          {wallet?.balance.toFixed(8) || '0'} {selectedCoin}
+      {/* 헤더 */}
+      <div className="flex items-center gap-4">
+        <button
+          onClick={() => onNavigate('home')}
+          className="w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
+        >
+          <ArrowLeft className="w-5 h-5 text-cyan-400" />
+        </button>
+        <div>
+          <h2 className="text-white text-xl">출금</h2>
+          <p className="text-slate-400 text-sm">코인을 출금하세요</p>
         </div>
       </div>
 
+      {/* 스마트 거래 토글 - 제거하고 정보만 표시 */}
+      <div className="relative group">
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl opacity-20 blur"></div>
+        <div className="relative bg-purple-900/20 border border-purple-500/30 rounded-xl p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
+              <Zap className="w-5 h-5 text-purple-400 animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <p className="text-white text-sm">스마트 거래 사용중</p>
+              <p className="text-purple-300 text-xs">빠르고 안전한 거래를 경험하세요</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 코인 선택 - 잔액 표시 개선 */}
       <div>
-        <label className="block text-slate-300 mb-2">받는 주소</label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={toAddress}
-            onChange={(e) => setToAddress(e.target.value)}
-            placeholder="주소 입력"
-            className="flex-1 bg-slate-800/50 border border-cyan-500/20 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
-          />
-          <button 
-            onClick={handleQRScan}
-            className="bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 px-4 rounded-lg hover:bg-cyan-500/30 transition-all"
-            style={{ boxShadow: '0 0 10px rgba(6, 182, 212, 0.2)' }}
+        <label className="block text-slate-300 mb-3">코인 선택</label>
+        <div className="grid grid-cols-3 gap-3">
+          {coins.map((coin) => {
+            const wallet = wallets.find(w => w.coin_type === coin);
+            return (
+              <button
+                key={coin}
+                onClick={() => onSelectCoin(coin)}
+                className={`p-4 rounded-xl border-2 transition-all active:scale-95 ${
+                  selectedCoin === coin
+                    ? 'border-cyan-500 bg-cyan-500/10'
+                    : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
+                }`}
+              >
+                <div className="text-center">
+                  <p className={`text-base mb-1 ${selectedCoin === coin ? 'text-cyan-400' : 'text-slate-300'}`}>
+                    {coin}
+                  </p>
+                  {wallet && (
+                    <p className="text-xs text-slate-500 truncate">
+                      {wallet.balance >= 1000000 
+                        ? (wallet.balance / 1000000).toFixed(2) + 'M'
+                        : wallet.balance >= 1000
+                        ? (wallet.balance / 1000).toFixed(2) + 'K'
+                        : wallet.balance.toFixed(4)}
+                    </p>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 출금 폼 */}
+      {selectedWallet ? (
+        <div className="space-y-4">
+          {/* 받는 주소 */}
+          <div>
+            <label className="block text-slate-300 mb-2">받는 주소</label>
+            <div className="relative">
+              <input
+                type="text"
+                value={toAddress}
+                onChange={(e) => setToAddress(e.target.value)}
+                placeholder={`${selectedCoin} 주소를 입력하세요`}
+                className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 transition-colors"
+              />
+            </div>
+          </div>
+
+
+          {/* 출금 금액 */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-slate-300">출금 금액</label>
+              <button
+                onClick={handleMaxAmount}
+                className="text-cyan-400 text-sm hover:text-cyan-300 transition-colors"
+              >
+                MAX
+              </button>
+            </div>
+            <div className="relative">
+              <input
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                step="any"
+                className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-20 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 transition-colors"
+              />
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+                {selectedCoin}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-slate-400">
+                사용 가능: {selectedWallet.balance.toFixed(8)} {selectedCoin}
+              </span>
+            </div>
+          </div>
+
+          {/* 가스비 견적 */}
+          {useSupertransaction && gasQuote && (
+            <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Info className="w-4 h-4 text-cyan-400" />
+                <span className="text-white text-sm">가스비 견적</span>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">예상 가스비</span>
+                  <span className="text-white">{gasQuote.gasCost}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">예상 시간</span>
+                  <span className="text-green-400">{gasQuote.estimatedTime}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">네트워크</span>
+                  <span className="text-white">{gasQuote.network}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isCalculatingGas && (
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>가스비 계산 중...</span>
+            </div>
+          )}
+
+          {/* 출금 버튼 */}
+          <button
+            onClick={handleWithdraw}
+            disabled={isLoading || !toAddress || !amount || isCalculatingGas}
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 rounded-xl hover:shadow-lg hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-98"
           >
-            <QrCode className="w-5 h-5" />
+            {isLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>처리 중...</span>
+              </>
+            ) : (
+              <>
+                <Send className="w-5 h-5" />
+                <span>출금 요청</span>
+              </>
+            )}
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-        </div>
-        {toAddress && !validateAddress(toAddress) && (
-          <div className="text-red-400 text-sm mt-1">올바른 주소 형식이 아닙니다</div>
-        )}
-      </div>
 
-      <div>
-        <label className="block text-slate-300 mb-2">출금 수량</label>
-        <div className="relative">
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.0"
-            step="0.00000001"
-            min="0"
-            className="w-full bg-slate-800/50 border border-cyan-500/20 rounded-lg px-4 py-3 pr-20 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
-          />
-          <button 
-            onClick={handleMaxAmount}
-            className="absolute right-2 top-1/2 -translate-y-1/2 bg-purple-500/20 border border-purple-500/50 text-purple-400 px-4 py-1.5 rounded-lg hover:bg-purple-500/30 transition-all text-sm"
-          >
-            전액
-          </button>
+          {/* 출금 안내 */}
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-amber-400 text-sm mb-1">출금 안내</p>
+                <div className="space-y-1 text-xs text-amber-300">
+                  <p>• 출금은 관리자 승인 후 처리됩니다</p>
+                  <p>• 주소를 정확히 확인해주세요</p>
+                  <p>• 출금은 되돌릴 수 없습니다</p>
+                  {useSupertransaction && (
+                    <p>• 스마트 거래로 빠르고 안전하게 처리됩니다</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="text-slate-400 text-sm mt-1">
-          ≈ ₩{(parseFloat(amount || '0') * getCoinRate(selectedCoin)).toLocaleString()}
+      ) : (
+        <div className="text-center py-12 bg-slate-800/30 border border-slate-700/50 rounded-xl">
+          <p className="text-slate-400">선택한 코인의 지갑이 없습니다</p>
         </div>
-      </div>
+      )}
 
-      <div 
-        className="bg-slate-800/50 border border-cyan-500/20 rounded-xl p-4"
-      >
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-slate-400">네트워크 수수료</span>
-          <span className="text-white">{networkFee.toFixed(4)} {selectedCoin}</span>
+      {/* 최근 출금 내역 */}
+      {recentWithdrawals.length > 0 && (
+        <div>
+          <h3 className="text-white mb-3">최근 출금 내역</h3>
+          <div className="space-y-2">
+            {recentWithdrawals.map((withdrawal) => (
+              <div
+                key={withdrawal.withdrawal_id}
+                className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-white">-{withdrawal.amount} {withdrawal.coin_type}</span>
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full ${
+                      withdrawal.status === 'completed'
+                        ? 'bg-green-500/20 text-green-400'
+                        : withdrawal.status === 'pending'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : withdrawal.status === 'processing'
+                        ? 'bg-cyan-500/20 text-cyan-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}
+                  >
+                    {withdrawal.status === 'completed'
+                      ? '완료'
+                      : withdrawal.status === 'pending'
+                      ? '대기 중'
+                      : withdrawal.status === 'processing'
+                      ? '처리 중'
+                      : '거부됨'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>{new Date(withdrawal.created_at).toLocaleString('ko-KR')}</span>
+                  <span className="truncate max-w-[120px]">{withdrawal.to_address}</span>
+                </div>
+                {withdrawal.supertransaction_payload && (
+                  <div className="mt-2 flex items-center gap-1 text-xs text-purple-400">
+                    <Zap className="w-3 h-3" />
+                    <span>스마트 거래</span>
+                  </div>
+                )}
+              </div>
+            ))}</div>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-slate-400">받는 금액</span>
-          <span className="text-cyan-400">{calculateReceivedAmount().toFixed(4)} {selectedCoin}</span>
-        </div>
-      </div>
-
-      <button 
-        onClick={handleSubmit}
-        disabled={isSubmitting || !toAddress || !amount || !validateAddress(toAddress)}
-        className="w-full bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 py-4 rounded-xl hover:bg-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isSubmitting ? '처리 중...' : '출금 신청하기'}
-      </button>
+      )}
     </div>
   );
 }

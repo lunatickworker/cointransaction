@@ -1,7 +1,8 @@
-import { ChevronRight, Copy, QrCode, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { ChevronRight, Copy, QrCode, ArrowDownToLine, ArrowUpFromLine, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { Screen, WalletData, Transaction, CoinType } from '../App';
-import { getCoinRate } from '../utils/helpers';
+import { getCoinRateSync, preloadCoinRates } from '../utils/helpers';
 import { toast } from 'sonner@2.0.3';
+import { useState, useEffect } from 'react';
 
 interface WalletDetailProps {
   wallets: WalletData[];
@@ -12,6 +13,16 @@ interface WalletDetailProps {
 
 export function WalletDetail({ wallets, transactions, selectedCoin, onNavigate }: WalletDetailProps) {
   const wallet = wallets.find(w => w.coin_type === selectedCoin);
+  const [coinRate, setCoinRate] = useState(0);
+  
+  // 가격 로드
+  useEffect(() => {
+    preloadCoinRates().then(() => {
+      if (wallet) {
+        setCoinRate(getCoinRateSync(wallet.coin_type));
+      }
+    });
+  }, [wallet]);
   
   if (!wallet) {
     return (
@@ -21,17 +32,34 @@ export function WalletDetail({ wallets, transactions, selectedCoin, onNavigate }
     );
   }
 
-  const value = parseFloat(wallet.balance.toString()) * getCoinRate(wallet.coin_type);
+  const value = parseFloat(wallet.balance.toString()) * coinRate;
 
-  const copyAddress = (address: string) => {
-    navigator.clipboard.writeText(address);
-    toast.success('주소가 복사되었습니다');
+  const copyAddress = async (address: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(address);
+        toast.success('주소가 복사되었습니다');
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = address;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        toast.success('주소가 복사되었습니다');
+      }
+    } catch (err) {
+      toast.error('자동 복사가 지원되지 않습니다. 주소를 직접 복사해주세요.');
+      console.error('Copy failed:', err);
+    }
   };
 
   return (
     <div className="space-y-6">
       <button 
-        onClick={() => onNavigate('home')} 
+        onClick={() => onNavigate('wallets')} 
         className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
       >
         <ChevronRight className="w-4 h-4 rotate-180" />
@@ -49,26 +77,39 @@ export function WalletDetail({ wallets, transactions, selectedCoin, onNavigate }
         <div className="text-slate-400">≈ ₩{value.toLocaleString()}</div>
       </div>
 
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => onNavigate('deposit')}
-          className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-xl hover:shadow-lg transition-all"
+          className="relative overflow-hidden rounded-2xl transition-all active:scale-98"
         >
-          입금하기
+          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500 to-blue-600"></div>
+          <div className="relative px-6 py-4 flex flex-col items-center justify-center gap-2">
+            <ArrowDownLeft className="w-6 h-6 text-white" />
+            <span className="text-white">입금하기</span>
+          </div>
         </button>
+        
         <button
           onClick={() => onNavigate('withdrawal')}
-          className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl hover:shadow-lg transition-all"
+          className="relative overflow-hidden rounded-2xl transition-all active:scale-98"
         >
-          출금하기
+          <div className="absolute inset-0 bg-gradient-to-br from-pink-500 to-purple-600"></div>
+          <div className="relative px-6 py-4 flex flex-col items-center justify-center gap-2">
+            <ArrowUpRight className="w-6 h-6 text-white" />
+            <span className="text-white">출금하기</span>
+          </div>
         </button>
       </div>
 
       <div className="bg-slate-800/50 border border-cyan-500/20 rounded-xl p-4">
         <div className="text-slate-300 mb-3">내 지갑 주소</div>
-        <div className="bg-slate-900/50 rounded-lg p-4 mb-3">
-          <div className="w-32 h-32 bg-white rounded-lg mx-auto mb-3 flex items-center justify-center">
-            <QrCode className="w-24 h-24 text-slate-900" />
+        <div className="bg-slate-900/50 rounded-lg p-4 mb-3 flex justify-center">
+          <div className="p-3 bg-white rounded-xl">
+            <img 
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(wallet.address)}`}
+              alt="QR Code"
+              className="w-32 h-32"
+            />
           </div>
         </div>
         <div className="flex items-center gap-2">

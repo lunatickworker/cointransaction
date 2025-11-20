@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Activity, Mail, Lock, LogIn, Eye, EyeOff, Sparkles, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
+import { supabase } from '../../utils/supabase/client';
 
 export function MobileLogin() {
   const [email, setEmail] = useState('');
@@ -9,9 +10,7 @@ export function MobileLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [showSignUp, setShowSignUp] = useState(false);
-  const [resetEmail, setResetEmail] = useState('');
   const [signUpData, setSignUpData] = useState({
     username: '',
     email: '',
@@ -51,20 +50,6 @@ export function MobileLogin() {
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!resetEmail) {
-      toast.error('이메일을 입력해주세요');
-      return;
-    }
-
-    // 비밀번호 재설정 이메일 발송 시뮬레이션
-    toast.success('비밀번호 재설정 링크가 이메일로 전송되었습니다');
-    setShowForgotPassword(false);
-    setResetEmail('');
-  };
-
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -79,10 +64,44 @@ export function MobileLogin() {
       return;
     }
 
-    // 회원가입 처리 (실제로는 Supabase API 호출)
-    toast.success('회원가입이 완료되었습니다! 로그인해주세요');
-    setShowSignUp(false);
-    setSignUpData({ username: '', email: '', password: '', confirmPassword: '' });
+    try {
+      // 이메일 중복 체크
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('email')
+        .eq('email', signUpData.email)
+        .single();
+
+      if (existingUser) {
+        throw new Error('이미 사용 중인 이메일입니다');
+      }
+
+      // users 테이블에 사용자 정보 저장
+      const newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const { error: dbError } = await supabase
+        .from('users')
+        .insert({
+          user_id: newUserId,
+          email: signUpData.email,
+          username: signUpData.username,
+          password_hash: signUpData.password,
+          role: 'user',
+          level: 1,
+          total_purchase: 0,
+          total_withdrawal: 0,
+          created_at: new Date().toISOString(),
+        });
+
+      if (dbError) throw dbError;
+
+      toast.success('회원가입이 완료되었습니다! 로그인해주세요');
+      setShowSignUp(false);
+      setSignUpData({ username: '', email: '', password: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('Sign up error:', error);
+      toast.error(error.message || '회원가입 중 오류가 발생했습니다');
+    }
   };
 
   return (
@@ -159,8 +178,8 @@ export function MobileLogin() {
               </div>
             </div>
 
-            {/* Remember & Forgot */}
-            <div className="flex items-center justify-between text-xs pt-0.5">
+            {/* Remember Me */}
+            <div className="flex items-center text-xs pt-0.5">
               <label className="flex items-center gap-2 text-slate-400 cursor-pointer hover:text-slate-300 transition-colors">
                 <input 
                   type="checkbox" 
@@ -170,24 +189,17 @@ export function MobileLogin() {
                 />
                 <span>로그인 유지</span>
               </label>
-              <button 
-                type="button" 
-                className="text-cyan-400 hover:text-cyan-300 transition-colors" 
-                onClick={() => setShowForgotPassword(true)}
-              >
-                비밀번호 찾기
-              </button>
             </div>
 
             {/* Login Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white py-3.5 rounded-xl hover:from-cyan-400 hover:to-purple-400 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm font-medium mt-6 active:scale-[0.99] shadow-lg shadow-cyan-500/20"
+              className="w-full bg-slate-900/50 border border-cyan-500 text-cyan-400 py-3.5 rounded-xl hover:bg-cyan-500/10 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm font-medium mt-6 active:scale-[0.99]"
             >
               {isLoading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
                   <span>로그인 중...</span>
                 </>
               ) : (
@@ -217,53 +229,16 @@ export function MobileLogin() {
         </div>
       </div>
 
-      {/* Forgot Password Modal */}
-      {showForgotPassword && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg text-white">비밀번호 찾기</h2>
-              <button
-                onClick={() => setShowForgotPassword(false)}
-                className="text-slate-400 hover:text-white transition-colors p-1 hover:bg-slate-800 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <form onSubmit={handleForgotPassword} className="space-y-4">
-              <div>
-                <p className="text-slate-400 text-xs mb-4 leading-relaxed">
-                  가입하신 이메일 주소를 입력해주세요. 비밀번호 재설정 링크를 보내드립니다.
-                </p>
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-500 z-10" />
-                  <input
-                    type="email"
-                    value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    className="w-full bg-slate-800/60 border border-slate-700/50 rounded-xl pl-11 pr-4 py-3.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500/40 focus:bg-slate-800/80 transition-all"
-                    placeholder="이메일을 입력하세요"
-                    required
-                  />
-                </div>
-              </div>
-              
-              <button
-                type="submit"
-                className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white py-3.5 rounded-xl hover:from-cyan-400 hover:to-purple-400 transition-all duration-200 text-sm font-medium shadow-lg flex items-center justify-center gap-2 active:scale-[0.99]"
-              >
-                재설정 링크 전송
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Sign Up Modal */}
       {showSignUp && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-fade-in overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700/50 rounded-2xl p-6 w-full max-w-sm shadow-2xl my-6">
+        <div 
+          className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-fade-in overflow-y-auto"
+          onClick={() => setShowSignUp(false)}
+        >
+          <div 
+            className="bg-slate-900 border border-slate-700/50 rounded-2xl p-6 w-full max-w-sm shadow-2xl my-6"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg text-white">회원가입</h2>
               <button
@@ -334,7 +309,7 @@ export function MobileLogin() {
               
               <button
                 type="submit"
-                className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white py-3.5 rounded-xl hover:from-cyan-400 hover:to-purple-400 transition-all duration-200 text-sm font-medium shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 active:scale-[0.99] mt-2"
+                className="w-full bg-slate-900/50 border border-cyan-500 text-cyan-400 py-3.5 rounded-xl hover:bg-cyan-500/10 transition-all duration-200 text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.99] mt-2"
               >
                 회원가입
               </button>
