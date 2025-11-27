@@ -2,9 +2,10 @@
  * 가스비 정책 헬퍼 함수
  * 
  * 사용자 레벨에 따른 가스비 스폰서십 정책을 자동으로 가져옵니다.
+ * RLS 정책 때문에 Backend API를 통해 조회합니다.
  */
 
-import { supabase } from '../supabase/client';
+import { SUPABASE_CONFIG } from '../config';
 
 export interface GasPaymentConfig {
   sponsor: boolean;
@@ -14,71 +15,37 @@ export interface GasPaymentConfig {
 
 /**
  * 사용자 레벨에 따른 가스비 정책 가져오기
+ * Backend API를 통해 조회 (RLS 우회)
  */
 export async function getGasPolicyForUser(userId: string): Promise<GasPaymentConfig> {
   try {
-    // 1. 사용자 레벨 확인
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('level')
-      .eq('user_id', userId)
-      .single();
+    const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+    const response = await fetch(`${backendUrl}/api/gas-policy/${userId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_CONFIG.anonKey}`
+      }
+    });
 
-    if (userError || !userData) {
-      console.error('User fetch error:', userError);
-      // 기본값: 사용자가 100% 부담
+    if (!response.ok) {
       return {
         sponsor: false,
         token: 'USDC'
       };
     }
 
-    const userLevel = userData.level || 'Basic';
+    const data = await response.json();
 
-    // 2. 해당 레벨의 가스비 정책 가져오기
-    const { data: policyData, error: policyError } = await supabase
-      .from('gas_sponsorship_policies')
-      .select('*')
-      .eq('user_level', userLevel)
-      .eq('is_active', true)
-      .single();
-
-    if (policyError || !policyData) {
-      console.error('Policy fetch error:', policyError);
-      // 기본값: 사용자가 100% 부담
+    if (!data.success || !data.policy) {
       return {
         sponsor: false,
         token: 'USDC'
       };
     }
 
-    // 3. 정책에 따라 gasPayment 설정
-    switch (policyData.sponsor_mode) {
-      case 'operator':
-        // 100% 운영자 부담
-        return {
-          sponsor: true
-        };
-
-      case 'partial':
-        // 부분 지원: 사용자는 maxUserPayment까지만 부담
-        return {
-          sponsor: true,
-          token: policyData.gas_token,
-          maxUserPayment: policyData.max_user_payment?.toString() || '1'
-        };
-
-      case 'user':
-      default:
-        // 100% 사용자 부담
-        return {
-          sponsor: false,
-          token: policyData.gas_token
-        };
-    }
+    return data.policy;
   } catch (error) {
-    console.error('Gas policy fetch error:', error);
-    // 에러 발생 시 기본값
     return {
       sponsor: false,
       token: 'USDC'
@@ -89,16 +56,16 @@ export async function getGasPolicyForUser(userId: string): Promise<GasPaymentCon
 /**
  * 가스비 정책을 사용자 친화적인 텍스트로 변환
  */
-export function getGasPolicyDescription(config: GasPaymentConfig, userLevel: string): string {
+export function getGasPolicyDescription(config: GasPaymentConfig): string {
   if (config.sponsor && !config.maxUserPayment) {
-    return `${userLevel} 회원 혜택: 가스비 100% 무료 🎉`;
+    return '가스비 100% 무료 🎉';
   }
   
   if (config.sponsor && config.maxUserPayment) {
-    return `${userLevel} 회원 혜택: 최대 ${config.maxUserPayment} ${config.token}까지만 부담 ✨`;
+    return `최대 ${config.maxUserPayment} ${config.token}까지만 부담 ✨`;
   }
   
-  return `가스비는 ${config.token}로 지불됩니다`;
+  return `출금 가스비는 본인 부담`;
 }
 
 /**

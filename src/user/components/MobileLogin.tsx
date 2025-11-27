@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Activity, Mail, Lock, LogIn, Eye, EyeOff, Sparkles, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -11,6 +11,8 @@ export function MobileLogin() {
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [showSignUp, setShowSignUp] = useState(false);
+  const [emailError, setEmailError] = useState(false);
+  const [passwordError, setPasswordError] = useState(false);
   const [signUpData, setSignUpData] = useState({
     username: '',
     email: '',
@@ -19,16 +21,32 @@ export function MobileLogin() {
   });
   const { login } = useAuth();
 
+  // 컴포넌트 마운트 시 저장된 이메일 불러오기
+  useEffect(() => {
+    const savedRememberMe = localStorage.getItem('rememberMe');
+    const savedEmail = localStorage.getItem('savedEmail');
+    
+    if (savedRememberMe === 'true' && savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setEmailError(false);
+    setPasswordError(false);
 
     try {
       const result = await login(email, password);
       
       // 관리자는 사용자 페이지 로그인 불가
       if (result && result.role === 'admin') {
-        toast.error('관리자는 사용자 페이지에 로그인할 수 없습니다');
+        toast.error('관리자는 사용자 페이지에 로그인할 수 없습니다', {
+          position: 'top-center',
+          duration: 3000,
+        });
         setIsLoading(false);
         return;
       }
@@ -42,9 +60,27 @@ export function MobileLogin() {
         localStorage.removeItem('savedEmail');
       }
       
-      toast.success('로그인 성공! 환영합니다 🎉');
+      toast.success('로그인 성공! 환영합니다 🎉', {
+        position: 'top-center',
+      });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '로그인에 실패했습니다');
+      const errorMessage = error instanceof Error ? error.message : '로그인에 실패했습니다';
+      
+      // 에러 타입에 따라 필드 에러 표시
+      if (errorMessage.includes('이메일')) {
+        setEmailError(true);
+      } else if (errorMessage.includes('비밀번호')) {
+        setPasswordError(true);
+      } else {
+        setEmailError(true);
+        setPasswordError(true);
+      }
+      
+      // 토스트 메시지 표시
+      toast.error(errorMessage, {
+        position: 'top-center',
+        duration: 3000,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -55,12 +91,18 @@ export function MobileLogin() {
 
     // 유효성 검사
     if (signUpData.password !== signUpData.confirmPassword) {
-      toast.error('비밀번호가 일치하지 않습니다');
+      toast.error('비밀번호가 일치하지 않습니다', {
+        duration: 3000,
+        position: 'top-center',
+      });
       return;
     }
 
     if (signUpData.password.length < 8) {
-      toast.error('비밀번호는 8자 이상이어야 합니다');
+      toast.error('비밀번호는 8자 이상이어야 합니다', {
+        duration: 3000,
+        position: 'top-center',
+      });
       return;
     }
 
@@ -87,7 +129,7 @@ export function MobileLogin() {
           username: signUpData.username,
           password_hash: signUpData.password,
           role: 'user',
-          level: 1,
+          level: 'Basic',
           total_purchase: 0,
           total_withdrawal: 0,
           created_at: new Date().toISOString(),
@@ -95,12 +137,21 @@ export function MobileLogin() {
 
       if (dbError) throw dbError;
 
-      toast.success('회원가입이 완료되었습니다! 로그인해주세요');
+      toast.success('회원가입이 완료되었습니다! 로그인해주세요 🎉', {
+        duration: 4000,
+        position: 'top-center',
+      });
       setShowSignUp(false);
       setSignUpData({ username: '', email: '', password: '', confirmPassword: '' });
+      
+      // 회원가입한 이메일을 로그인 폼에 자동 입력
+      setEmail(signUpData.email);
     } catch (error: any) {
       console.error('Sign up error:', error);
-      toast.error(error.message || '회원가입 중 오류가 발생했습니다');
+      toast.error(error.message || '회원가입 중 오류가 발생했습니다', {
+        duration: 4000,
+        position: 'top-center',
+      });
     }
   };
 
@@ -139,12 +190,21 @@ export function MobileLogin() {
             <div className="space-y-1.5">
               <label className="block text-slate-300 text-xs pl-0.5">이메일</label>
               <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-500 z-10" />
+                <Mail className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 z-10 transition-colors ${
+                  emailError ? 'text-red-400' : 'text-slate-500'
+                }`} />
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-900/60 border border-slate-700/50 rounded-xl pl-11 pr-4 py-3.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500/40 focus:bg-slate-900/80 transition-all"
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError(false);
+                  }}
+                  className={`w-full bg-slate-900/60 border rounded-xl pl-11 pr-4 py-3.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:bg-slate-900/80 transition-all ${
+                    emailError 
+                      ? 'border-red-500/50 focus:border-red-500/70' 
+                      : 'border-slate-700/50 focus:border-cyan-500/40'
+                  }`}
                   placeholder="이메일을 입력하세요"
                   required
                 />
@@ -155,12 +215,21 @@ export function MobileLogin() {
             <div className="space-y-1.5">
               <label className="block text-slate-300 text-xs pl-0.5">비밀번호</label>
               <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-500 z-10" />
+                <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 z-10 transition-colors ${
+                  passwordError ? 'text-red-400' : 'text-slate-500'
+                }`} />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-900/60 border border-slate-700/50 rounded-xl pl-11 pr-11 py-3.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500/40 focus:bg-slate-900/80 transition-all"
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setPasswordError(false);
+                  }}
+                  className={`w-full bg-slate-900/60 border rounded-xl pl-11 pr-11 py-3.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:bg-slate-900/80 transition-all ${
+                    passwordError 
+                      ? 'border-red-500/50 focus:border-red-500/70' 
+                      : 'border-slate-700/50 focus:border-cyan-500/40'
+                  }`}
                   placeholder="비밀번호를 입력하세요"
                   required
                 />

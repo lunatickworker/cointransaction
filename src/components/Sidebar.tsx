@@ -1,4 +1,4 @@
-import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Shield, Repeat, Zap, Coins, CheckCircle, ShoppingCart, Activity, Users } from "lucide-react";
+import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Shield, Repeat, Zap, Coins, CheckCircle, ShoppingCart, Activity, Users, MessageCircle } from "lucide-react";
 
 interface SidebarProps {
   activeTab: string;
@@ -13,6 +13,7 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     { id: "deposit-withdrawal", label: "구매 요청 관리", icon: ShoppingCart },
     { id: "swaps", label: "스왑 관리", icon: Repeat },
     { id: "account-verifications", label: "계좌인증 관리", icon: CheckCircle },
+    { id: "support-center", label: "고객센터", icon: MessageCircle },
     { id: "coins", label: "코인 관리", icon: Coins },
     { id: "gas-policy", label: "가스비 정책", icon: Zap },
     { id: "security", label: "보안 모니터", icon: Shield },

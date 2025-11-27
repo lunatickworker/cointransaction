@@ -13,8 +13,16 @@ function AppContent() {
   const { user, isLoading } = useAuth();
   const [currentRoute, setCurrentRoute] = useState<Route>('user');
 
-  // URL 해시 기반 라우팅 (선택적)
+  // URL 경로 및 해시 기반 라우팅
   useEffect(() => {
+    // /transaction 경로는 admin 로그인으로 리디렉션
+    const pathname = window.location.pathname;
+    if (pathname === '/transaction') {
+      window.location.hash = '#admin/login';
+      setCurrentRoute('admin-login');
+      return;
+    }
+
     const hash = window.location.hash.slice(1);
     if (hash.startsWith('admin/login')) {
       setCurrentRoute('admin-login');

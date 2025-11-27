@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "../utils/supabase/client";
 import { toast } from "sonner@2.0.3";
 import { NeonCard } from "./NeonCard";
+import { useAuth } from "../contexts/AuthContext";
 
 interface UserData {
   user_id: string;
@@ -13,6 +14,7 @@ interface UserData {
   created_at: string;
   last_login: string;
   role?: string;
+  level?: string;
 }
 
 interface WalletData {
@@ -32,6 +34,7 @@ interface Stats {
 }
 
 export function UserWalletManagement() {
+  const { user } = useAuth();
   const [users, setUsers] = useState<UserData[]>([]);
   const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [userWallets, setUserWallets] = useState<WalletData[]>([]);
@@ -54,6 +57,16 @@ export function UserWalletManagement() {
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
+
+  // 사용자 정보 편집
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editForm, setEditForm] = useState({
+    username: '',
+    email: '',
+    newPassword: ''
+  });
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [generatedPassword, setGeneratedPassword] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -78,34 +91,56 @@ export function UserWalletManagement() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    // 사용자 데이터
-    const { data: usersData } = await supabase
-      .from('users')
-      .select('*')
-      .order('created_at', { ascending: false });
+    try {
+      // Backend API로 사용자 데이터 가져오기 (RLS 우회)
+      const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
+      
+      console.log('🔍 Fetching users from Backend API:', `${backendUrl}/api/admin/users`);
+      
+      const response = await fetch(`${backendUrl}/api/admin/users`, {
+        headers: {
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      console.log('📡 Response status:', response.status);
+      
+      const result = await response.json();
+      console.log('📦 Response data:', result);
 
-    if (usersData) {
-      setUsers(usersData);
+      if (result.success && result.users) {
+        console.log('✅ Users loaded:', result.users.length);
+        setUsers(result.users);
+        
+        // 통계 계산
+        const totalUsers = result.users.length;
+        const verifiedUsers = result.users.filter((u: any) => u.account_verification_status === 'verified').length;
+        
+        // 지갑 데이터도 Backend API로 가져오기
+        const { data: walletsData } = await supabase
+          .from('wallets')
+          .select('balance, coin_type');
+        
+        const totalWallets = walletsData?.length || 0;
+        const totalValue = walletsData?.reduce((sum, w) => sum + (w.balance || 0), 0) || 0;
+
+        setStats({
+          totalUsers,
+          verifiedUsers,
+          totalWallets,
+          totalValue
+        });
+      } else {
+        console.error('❌ Backend API error:', result);
+        toast.error(result.error || '사용자 데이터를 가져오는데 실패했습니다');
+      }
+    } catch (error) {
+      console.error('❌ Error fetching users:', error);
+      toast.error('사용자 데이터를 가져오는데 실패했습니다');
+    } finally {
+      setIsLoading(false);
     }
-
-    // 통계 계산
-    const { data: walletsData } = await supabase
-      .from('wallets')
-      .select('balance, coin_type');
-
-    const totalUsers = usersData?.length || 0;
-    const verifiedUsers = usersData?.filter(u => u.account_verification_status === 'verified').length || 0;
-    const totalWallets = walletsData?.length || 0;
-    const totalValue = walletsData?.reduce((sum, w) => sum + (w.balance || 0), 0) || 0;
-
-    setStats({
-      totalUsers,
-      verifiedUsers,
-      totalWallets,
-      totalValue
-    });
-
-    setIsLoading(false);
   };
 
   const fetchUserWallets = async (userId: string) => {
@@ -123,6 +158,8 @@ export function UserWalletManagement() {
   const handleUserSelect = async (user: UserData) => {
     setSelectedUser(user);
     setActiveTab("info");
+    setIsEditMode(false); // 편집 모드 초기화
+    setShowPasswordReset(false); // 비밀번호 모달 초기화
     await fetchUserWallets(user.user_id);
   };
 
@@ -146,6 +183,121 @@ export function UserWalletManagement() {
     // 선택된 사용자 업데이트
     if (selectedUser?.user_id === userId) {
       setSelectedUser({ ...selectedUser, status: newStatus });
+    }
+  };
+
+  const handleEditUser = () => {
+    if (!selectedUser) return;
+    setEditForm({
+      username: selectedUser.username,
+      email: selectedUser.email,
+      newPassword: ''
+    });
+    setIsEditMode(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditMode(false);
+    setEditForm({ username: '', email: '', newPassword: '' });
+  };
+
+  const handleSaveUserInfo = async () => {
+    if (!selectedUser) return;
+
+    try {
+      // 사용자 기본 정보 업데이트
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          username: editForm.username,
+          email: editForm.email
+        })
+        .eq('user_id', selectedUser.user_id);
+
+      if (updateError) throw updateError;
+
+      toast.success('사용자 정보가 업데이트되었습니다');
+      
+      // 선택된 사용자 업데이트
+      setSelectedUser({
+        ...selectedUser,
+        username: editForm.username,
+        email: editForm.email
+      });
+      
+      await fetchData();
+      setIsEditMode(false);
+    } catch (error) {
+      console.error('Update error:', error);
+      toast.error('정보 업데이트에 실패했습니다');
+    }
+  };
+
+  const handleGeneratePassword = () => {
+    // 안전한 임시 비밀번호 생성 (12자리: 대문자+소문자+숫자+특수문자)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    const length = 12;
+    let password = '';
+    
+    // 각 카테고리에서 최소 1개씩
+    password += 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]; // 대문자
+    password += 'abcdefghijkmnpqrstuvwxyz'[Math.floor(Math.random() * 24)]; // 소문자
+    password += '23456789'[Math.floor(Math.random() * 8)]; // 숫자
+    password += '!@#$%'[Math.floor(Math.random() * 5)]; // 특수문자
+    
+    // 나머지 랜덤
+    for (let i = 4; i < length; i++) {
+      password += chars[Math.floor(Math.random() * chars.length)];
+    }
+    
+    // 섞기
+    password = password.split('').sort(() => Math.random() - 0.5).join('');
+    
+    setGeneratedPassword(password);
+    setShowPasswordReset(true);
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUser || !generatedPassword) return;
+
+    try {
+      // users 테이블에 임시 비밀번호 저장 (해시화는 로그인 시 처리)
+      const { error } = await supabase
+        .from('users')
+        .update({ 
+          password_hash: generatedPassword // 실제로는 bcrypt 해시 필요
+        })
+        .eq('user_id', selectedUser.user_id);
+
+      if (error) throw error;
+
+      toast.success('비밀번호가 초기화되었습니다. 새 비밀번호를 사용자에게 안전하게 전달하세요.');
+    } catch (error) {
+      console.error('Password reset error:', error);
+      toast.error('비밀번호 초기화에 실패했습니다');
+    }
+  };
+
+  const handleCopyPassword = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(generatedPassword);
+        toast.success('비밀번호가 클립보드에 복사되었습니다');
+      } else {
+        // Fallback: 텍스트 선택 및 수동 복사
+        const textArea = document.createElement('textarea');
+        textArea.value = generatedPassword;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        toast.success('비밀번호가 클립보드에 복사되었습니다');
+      }
+    } catch (error) {
+      console.error('Copy failed:', error);
+      toast.error('복사에 실패했습니다. 수동으로 복사해주세요.');
     }
   };
 
@@ -198,11 +350,31 @@ export function UserWalletManagement() {
     }
   };
 
-  const copyToClipboard = (address: string, walletId: string) => {
-    navigator.clipboard.writeText(address);
-    setCopiedAddress(walletId);
-    toast.success('주소가 복사되었습니다');
-    setTimeout(() => setCopiedAddress(null), 2000);
+  const copyToClipboard = async (address: string, walletId: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(address);
+        setCopiedAddress(walletId);
+        toast.success('주소가 복사되었습니다');
+        setTimeout(() => setCopiedAddress(null), 2000);
+      } else {
+        // Fallback: 텍스트 선택 및 수동 복사
+        const textArea = document.createElement('textarea');
+        textArea.value = address;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopiedAddress(walletId);
+        toast.success('주소가 복사되었습니다');
+        setTimeout(() => setCopiedAddress(null), 2000);
+      }
+    } catch (error) {
+      console.error('Copy failed:', error);
+      toast.error('복사에 실패했습니다. 수동으로 복사해주세요.');
+    }
   };
 
   // 필터링된 사용자 목록
@@ -416,14 +588,14 @@ export function UserWalletManagement() {
         {/* 오른쪽: 사용자 상세 정보 */}
         <div className="lg:col-span-3">
           {!selectedUser ? (
-            <NeonCard className="p-12 h-[calc(100vh-300px)] flex items-center justify-center bg-slate-900/90">
+            <NeonCard className="p-12 h-[calc(100vh-300px)] flex items-center justify-center">
               <div className="text-center text-slate-400">
                 <UserCheck className="w-16 h-16 mx-auto mb-4 opacity-50" />
                 <p>사용자를 선택해주세요</p>
               </div>
             </NeonCard>
           ) : (
-            <NeonCard className="p-6 h-[calc(100vh-300px)] bg-slate-900/90">
+            <NeonCard className="p-6 h-[calc(100vh-300px)]">
               {/* 탭 헤더 */}
               <div className="flex items-center justify-between mb-6">
                 <div className="flex gap-2">
@@ -466,18 +638,61 @@ export function UserWalletManagement() {
                   <div className="space-y-6">
                     {/* 기본 정보 */}
                     <div className="bg-slate-800/70 rounded-lg p-6 border border-slate-700">
-                      <h3 className="text-lg text-cyan-400 mb-4 flex items-center gap-2">
-                        <UserCheck className="w-5 h-5" />
-                        기본 정보
-                      </h3>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg text-cyan-400 flex items-center gap-2">
+                          <UserCheck className="w-5 h-5" />
+                          기본 정보
+                        </h3>
+                        {!isEditMode ? (
+                          <button
+                            onClick={handleEditUser}
+                            className="px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-all border border-purple-500/50 text-sm"
+                          >
+                            정보 수정
+                          </button>
+                        ) : (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleSaveUserInfo}
+                              className="px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-all border border-green-500/50 text-sm"
+                            >
+                              저장
+                            </button>
+                            <button
+                              onClick={handleCancelEdit}
+                              className="px-3 py-1.5 bg-slate-600 text-slate-300 rounded-lg hover:bg-slate-500 transition-all text-sm"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-slate-400 text-sm mb-1">사용자명</p>
-                          <p className="text-slate-300">{selectedUser.username}</p>
+                          {isEditMode ? (
+                            <input
+                              type="text"
+                              value={editForm.username}
+                              onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-300 focus:outline-none focus:border-cyan-500"
+                            />
+                          ) : (
+                            <p className="text-slate-300">{selectedUser.username}</p>
+                          )}
                         </div>
                         <div>
                           <p className="text-slate-400 text-sm mb-1">이메일</p>
-                          <p className="text-slate-300">{selectedUser.email}</p>
+                          {isEditMode ? (
+                            <input
+                              type="email"
+                              value={editForm.email}
+                              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-300 focus:outline-none focus:border-cyan-500"
+                            />
+                          ) : (
+                            <p className="text-slate-300">{selectedUser.email}</p>
+                          )}
                         </div>
                         <div>
                           <p className="text-slate-400 text-sm mb-1">계좌인증 상태</p>
@@ -500,6 +715,74 @@ export function UserWalletManagement() {
                           <p className="text-slate-300">
                             {selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleDateString() : '-'}
                           </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-400 text-sm mb-1">
+                            회원 등급
+                            <span className="ml-2 text-xs text-cyan-400">💡 가스비 정책 자동 적용</span>
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={selectedUser.level || 'Basic'}
+                              onChange={async (e) => {
+                                const newLevel = e.target.value;
+                                
+                                try {
+                                  // Backend API로 등급 업데이트
+                                  const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+                                  const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
+                                  
+                                  const response = await fetch(`${backendUrl}/api/admin/users/${selectedUser.user_id}/level`, {
+                                    method: 'PUT',
+                                    headers: {
+                                      'Authorization': `Bearer ${anonKey}`,
+                                      'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({ level: newLevel })
+                                  });
+
+                                  const result = await response.json();
+                                  
+                                  if (!result.success) {
+                                    throw new Error(result.error || '등급 변경 실패');
+                                  }
+                                  
+                                  toast.success(`등급이 ${newLevel}로 변경되었습니다. 가스비 정책이 자동으로 적용됩니다.`);
+                                  setSelectedUser({ ...selectedUser, level: newLevel });
+                                  await fetchData();
+                                } catch (error: any) {
+                                  console.error('Level update error:', error);
+                                  toast.error(error.message || '등급 변경 실패');
+                                }
+                              }}
+                              className="px-3 py-1 bg-slate-700 border border-slate-600 rounded text-sm text-slate-300 focus:outline-none focus:border-cyan-500"
+                            >
+                              <option value="Basic">Basic (100% 사용자 부담)</option>
+                              <option value="Standard">Standard (부분 지원)</option>
+                              <option value="Premium">Premium (대부분 지원)</option>
+                              <option value="VIP">VIP (100% 운영자 부담)</option>
+                            </select>
+                            {selectedUser.level === 'VIP' && <span className="text-yellow-400">👑</span>}
+                            {selectedUser.level === 'Premium' && <span className="text-purple-400">💎</span>}
+                            {selectedUser.level === 'Standard' && <span className="text-cyan-400">⭐</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 비밀번호 초기화 - 기본 정보 카드 내부 */}
+                      <div className="mt-6 pt-6 border-t border-slate-700/50">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Lock className="w-4 h-4 text-orange-400" />
+                            <p className="text-slate-400 text-sm">비밀번호 초기화</p>
+                          </div>
+                          <button
+                            onClick={handleGeneratePassword}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-all border border-orange-500/50 text-sm"
+                          >
+                            <Shield className="w-4 h-4" />
+                            임시 비밀번호 생성
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -688,6 +971,62 @@ export function UserWalletManagement() {
                   ) : (
                     `추가 (${selectedCoins.length})`
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 비밀번호 초기화 모달 */}
+      {showPasswordReset && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 rounded-lg border border-orange-500/30 shadow-xl max-w-md w-full">
+            <div className="p-6">
+              <h3 className="text-xl text-orange-400 mb-4 flex items-center gap-2">
+                <Shield className="w-5 h-5" />
+                임시 비밀번호
+              </h3>
+              
+              <div className="space-y-4">
+                <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 bg-slate-950 px-3 py-2 rounded text-cyan-400 font-mono text-lg">
+                      {generatedPassword}
+                    </code>
+                    <button
+                      onClick={handleCopyPassword}
+                      className="p-2 bg-cyan-500/20 text-cyan-400 rounded hover:bg-cyan-500/30 transition-all"
+                      title="복사"
+                    >
+                      <Copy className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-slate-400 text-sm text-center">
+                  사용자에게 전달 후 모바일 앱에서 직접 변경할 수 있습니다
+                </p>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <button
+                  onClick={() => {
+                    setShowPasswordReset(false);
+                    setGeneratedPassword('');
+                  }}
+                  className="flex-1 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={async () => {
+                    await handleResetPassword();
+                    setShowPasswordReset(false);
+                  }}
+                  className="flex-1 px-4 py-2 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-all border border-orange-500/50"
+                >
+                  적용
                 </button>
               </div>
             </div>

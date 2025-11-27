@@ -86,6 +86,29 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
     };
 
     loadGasPolicy();
+
+    // 실시간 가스비 정책 업데이트 구독
+    const policySubscription = supabase
+      .channel('gas_policy_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'gas_sponsorship_policies'
+        },
+        async (payload) => {
+          console.log('Gas policy updated:', payload);
+          // 정책이 변경되면 다시 로드
+          await loadGasPolicy();
+          toast.success('가스비 정책이 업데이트되었습니다');
+        }
+      )
+      .subscribe();
+
+    return () => {
+      policySubscription.unsubscribe();
+    };
   }, [user]);
 
   // 실시간 출금 내역 업데이트
@@ -228,14 +251,14 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
             coin_type: selectedCoin,
             amount: amount,
             to_address: toAddress,
-            status: 'pending',
+            status: 'processing',  // 즉시 처리 시작
             supertransaction_payload: payload,
             gas_quote: quote
           });
 
         if (insertError) throw insertError;
 
-        toast.success('출금 요청이 제출되었습니다. 관리자 승인 후 처리됩니다.');
+        toast.success('출금이 진행중입니다. 잠시 후 완료됩니다.');
       } else {
         // 일반 출금
         const { error } = await supabase
@@ -246,11 +269,11 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
             coin_type: selectedCoin,
             amount: amount,
             to_address: toAddress,
-            status: 'pending'
+            status: 'processing'  // 즉시 처리 시작
           });
 
         if (error) throw error;
-        toast.success('출금 요청이 제출되었습니다');
+        toast.success('출금이 진행중입니다. 잠시 후 완료됩니다.');
       }
 
       // 초기화
@@ -382,6 +405,28 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
             </div>
           </div>
 
+          {/* 가스비 정책 안내 */}
+          {gasPaymentConfig && (
+            <div className="bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/30 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
+                  {userLevel === 'VIP' ? <Crown className="w-4 h-4 text-yellow-400" /> : <Zap className="w-4 h-4 text-cyan-400" />}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-white text-sm">가스비 정책</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${getLevelBadgeColor(userLevel)}`}>
+                      {userLevel}
+                    </span>
+                  </div>
+                  <p className="text-cyan-300 text-xs">
+                    {getGasPolicyDescription(gasPaymentConfig)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 가스비 견적 */}
           {useSupertransaction && gasQuote && (
             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
@@ -391,9 +436,21 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
               </div>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">예상 가스비</span>
+                  <span className="text-slate-400">총 가스비</span>
                   <span className="text-white">{gasQuote.gasCost}</span>
                 </div>
+                {gasPaymentConfig && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">내가 부담할 금액</span>
+                    <span className={`${gasPaymentConfig.sponsor ? 'text-green-400' : 'text-amber-400'}`}>
+                      {gasPaymentConfig.sponsor 
+                        ? '0 (100% 운영자 부담)' 
+                        : gasPaymentConfig.maxUserPayment 
+                        ? `최대 ${gasPaymentConfig.maxUserPayment} ${gasPaymentConfig.token}`
+                        : gasQuote.gasCost}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">예상 시간</span>
                   <span className="text-green-400">{gasQuote.estimatedTime}</span>
@@ -439,7 +496,6 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
               <div className="flex-1">
                 <p className="text-amber-400 text-sm mb-1">출금 안내</p>
                 <div className="space-y-1 text-xs text-amber-300">
-                  <p>• 출금은 관리자 승인 후 처리됩니다</p>
                   <p>• 주소를 정확히 확인해주세요</p>
                   <p>• 출금은 되돌릴 수 없습니다</p>
                   {useSupertransaction && (

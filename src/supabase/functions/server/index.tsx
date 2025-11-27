@@ -46,6 +46,103 @@ app.get("/make-server-b6d5667f/health", (c) => {
 });
 
 // =====================================================
+// Authentication API
+// =====================================================
+
+// POST /api/auth/login - 로그인
+app.post("/make-server-b6d5667f/api/auth/login", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { email, password } = body;
+
+    if (!email || !password) {
+      return c.json({ error: 'email and password are required' }, 400);
+    }
+
+    // 사용자 조회 (RLS 우회)
+    const { data: userData, error } = await supabase
+      .from('users')
+      .select('user_id, email, username, password_hash, role, status, level')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Database error:', error);
+      return c.json({ error: '로그인 중 오류가 발생했습니다' }, 500);
+    }
+
+    if (!userData) {
+      return c.json({ error: '등록되지 않은 이메일입니다' }, 401);
+    }
+
+    // 비밀번호 확인
+    if (userData.password_hash !== password) {
+      return c.json({ error: '비밀번호가 올바르지 않습니다' }, 401);
+    }
+
+    // 계정 상태 확인
+    if (userData.status !== 'active') {
+      return c.json({ error: '비활성화된 계정입니다. 관리자에게 문의하세요.' }, 403);
+    }
+
+    // last_login 업데이트
+    await supabase
+      .from('users')
+      .update({ last_login: new Date().toISOString() })
+      .eq('user_id', userData.user_id);
+
+    // 비밀번호 제외하고 반환
+    const { password_hash, ...userDataWithoutPassword } = userData;
+
+    return c.json({ 
+      success: true,
+      user: userDataWithoutPassword
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return c.json({ error: '로그인 처리 중 오류가 발생했습니다' }, 500);
+  }
+});
+
+// POST /api/auth/change-password - 비밀번호 변경
+app.post("/make-server-b6d5667f/api/auth/change-password", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { user_id, new_password } = body;
+
+    if (!user_id || !new_password) {
+      return c.json({ error: 'user_id and new_password are required' }, 400);
+    }
+
+    if (new_password.length < 8) {
+      return c.json({ error: '비밀번호는 8자 이상이어야 합니다' }, 400);
+    }
+
+    // 비밀번호 업데이트 (RLS 우회)
+    const { error } = await supabase
+      .from('users')
+      .update({ 
+        password_hash: new_password,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', user_id);
+
+    if (error) {
+      console.error('Password update error:', error);
+      return c.json({ error: '비밀번호 변경 중 오류가 발생했습니다' }, 500);
+    }
+
+    return c.json({ 
+      success: true,
+      message: '비밀번호가 성공적으로 변경되었습니다'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    return c.json({ error: '비밀번호 변경 처리 중 오류가 발생했습니다' }, 500);
+  }
+});
+
+// =====================================================
 // Wallet API
 // =====================================================
 
@@ -573,6 +670,46 @@ app.get("/make-server-b6d5667f/api/admin/users", async (c) => {
   }
 });
 
+// PUT /api/admin/users/:userId/level - 사용자 등급 변경
+app.put("/make-server-b6d5667f/api/admin/users/:userId/level", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    const body = await c.req.json();
+    const { level } = body;
+
+    if (!level) {
+      return c.json({ error: 'level is required' }, 400);
+    }
+
+    // 유효한 등급인지 확인
+    const validLevels = ['Basic', 'Standard', 'Premium', 'VIP'];
+    if (!validLevels.includes(level)) {
+      return c.json({ error: 'Invalid level' }, 400);
+    }
+
+    // 사용자 등급 업데이트 (service role로 RLS 우회)
+    const { data, error } = await supabase
+      .from('users')
+      .update({ 
+        level: level,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Level update error:', error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    return c.json({ success: true, user: data });
+  } catch (error) {
+    console.error('Level update error:', error);
+    return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/admin/security-logs - 보안 로그 조회
 app.get("/make-server-b6d5667f/api/admin/security-logs", async (c) => {
   try {
@@ -882,7 +1019,7 @@ app.post("/make-server-b6d5667f/api/biconomy/transfer", async (c) => {
 
     console.log('✅ Mock Transfer: Simulating blockchain transaction...');
     
-    // Mock TX Hash 생성 (실제로는 블록체인에서 받음)
+    // Mock TX Hash 생성 (실제��는 블록체인에서 받음)
     const mockTxHash = '0x' + Array.from(
       { length: 64 }, 
       () => Math.floor(Math.random() * 16).toString(16)
@@ -949,6 +1086,178 @@ app.get("/make-server-b6d5667f/api/biconomy/status/:txHash", async (c) => {
   } catch (error) {
     console.error('Biconomy status check error:', error);
     return c.json({ error: error.message || 'Internal server error' }, 500);
+  }
+});
+
+// =====================================================
+// User Management API
+// =====================================================
+
+// POST /api/users/update-level - 사용자 등급 변경
+app.post("/make-server-b6d5667f/api/users/update-level", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { user_id, level } = body;
+
+    if (!user_id || !level) {
+      return c.json({ error: 'user_id and level are required' }, 400);
+    }
+
+    // 유효한 등급 확인
+    const validLevels = ['Basic', 'Standard', 'Premium', 'VIP'];
+    if (!validLevels.includes(level)) {
+      return c.json({ error: 'Invalid level' }, 400);
+    }
+
+    console.log('Updating user level:', { user_id, level });
+
+    // Supabase Admin으로 RLS 우회하여 업데이트
+    const { data, error } = await supabase
+      .from('users')
+      .update({
+        level: level,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', user_id)
+      .select();
+
+    if (error) {
+      console.error('Update error:', error);
+      return c.json({ success: false, error: error.message }, 400);
+    }
+
+    if (!data || data.length === 0) {
+      return c.json({ success: false, error: '사용자를 찾을 수 없습니다' }, 404);
+    }
+
+    console.log('✅ User level updated successfully');
+
+    return c.json({ success: true, data: data[0] });
+  } catch (error: any) {
+    console.error('User level update error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================
+// Gas Policy Management API
+// =====================================================
+
+// GET /api/gas-policy/:userId - 사용자 가스비 정책 조회
+app.get("/make-server-b6d5667f/api/gas-policy/:userId", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+
+    if (!userId) {
+      return c.json({ success: false, error: 'userId is required' }, 400);
+    }
+
+    // 1. 사용자 레벨 확인 (RLS 우회)
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('level')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (userError || !userData) {
+      return c.json({ 
+        success: false, 
+        error: 'User not found',
+        policy: { sponsor: false, token: 'USDC' }
+      }, 404);
+    }
+
+    const userLevel = userData.level || 'Basic';
+
+    // 2. 해당 레벨의 가스비 정책 가져오기 (RLS 우회)
+    const { data: policyData, error: policyError } = await supabase
+      .from('gas_sponsorship_policies')
+      .select('*')
+      .eq('user_level', userLevel)
+      .maybeSingle();
+
+    if (policyError || !policyData) {
+      return c.json({ 
+        success: true, 
+        policy: { sponsor: false, token: 'USDC' }
+      });
+    }
+
+    // 3. 정책에 따라 gasPayment 설정
+    let policy: any;
+    
+    switch (policyData.sponsor_mode) {
+      case 'operator':
+        policy = { sponsor: true };
+        break;
+
+      case 'partial':
+        policy = {
+          sponsor: true,
+          token: policyData.gas_token || 'USDC',
+          maxUserPayment: policyData.max_user_payment?.toString() || '1'
+        };
+        break;
+
+      case 'user':
+      default:
+        policy = {
+          sponsor: false,
+          token: policyData.gas_token || 'USDC'
+        };
+        break;
+    }
+
+    return c.json({ success: true, policy });
+  } catch (error: any) {
+    return c.json({ 
+      success: true, 
+      policy: { sponsor: false, token: 'USDC' }
+    });
+  }
+});
+
+// POST /api/gas-policy/update - 가스비 정책 업데이트
+app.post("/make-server-b6d5667f/api/gas-policy/update", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { policy_id, sponsor_mode, max_user_payment, gas_token, description, is_active } = body;
+
+    if (!policy_id) {
+      return c.json({ error: 'policy_id is required' }, 400);
+    }
+
+    console.log('Updating gas policy:', policy_id);
+
+    // Supabase Admin으로 RLS 우회하여 업데이트
+    const { data, error } = await supabase
+      .from('gas_sponsorship_policies')
+      .update({
+        sponsor_mode,
+        max_user_payment,
+        gas_token,
+        description,
+        is_active,
+        updated_at: new Date().toISOString()
+      })
+      .eq('policy_id', policy_id)
+      .select();
+
+    if (error) {
+      console.error('Update error:', error);
+      return c.json({ success: false, error: error.message }, 400);
+    }
+
+    if (!data || data.length === 0) {
+      return c.json({ success: false, error: '정책을 찾을 수 없습니다' }, 404);
+    }
+
+    console.log('✅ Gas policy updated successfully');
+
+    return c.json({ success: true, data: data[0] });
+  } catch (error: any) {
+    console.error('Gas policy update error:', error);
+    return c.json({ success: false, error: error.message }, 500);
   }
 });
 

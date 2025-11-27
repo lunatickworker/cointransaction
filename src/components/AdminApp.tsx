@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { Dashboard } from "./Dashboard";
-import { DepositWithdrawalManagement } from "./DepositWithdrawalManagement";
 import { UserWalletManagement } from "./UserWalletManagement";
 import { SecurityMonitor } from "./SecurityMonitor";
 import { SwapManagement } from "./SwapManagement";
 import { CoinManagement } from "./CoinManagement";
 import { AccountVerificationManagement } from "./AccountVerificationManagement";
 import { GasSponsorshipPolicy } from "./GasSponsorshipPolicy";
+import { SupportCenter } from "./SupportCenter";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
+import { Dashboard } from "./Dashboard";
+import { DepositWithdrawalManagement } from "./DepositWithdrawalManagement";
 
 export function AdminApp() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
@@ -36,6 +37,7 @@ export function AdminApp() {
             {activeTab === "swaps" && <SwapManagement />}
             {activeTab === "coins" && <CoinManagement />}
             {activeTab === "security" && <SecurityMonitor />}
+            {activeTab === "support-center" && <SupportCenter />}
           </main>
         </div>
       </div>
