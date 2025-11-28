@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { MessageCircle, Send, Search, X } from 'lucide-react';
+import { MessageCircle, Send, Search, X, Trash2 } from 'lucide-react';
 import { supabase } from '../utils/supabase/client';
 import { toast } from 'sonner@2.0.3';
 import { useAuth } from '../contexts/AuthContext';
@@ -64,9 +64,14 @@ export function SupportCenter() {
               (m: any) => m.user_id === userId && m.sender_type === 'user' && !m.is_read
             ).length;
 
+            // 이메일에서 @ 앞부분 추출 (예: hong@example.com → hong)
+            const displayName = msg.users?.email 
+              ? msg.users.email.split('@')[0] 
+              : msg.users?.username || 'Unknown';
+
             chatMap.set(userId, {
               user_id: userId,
-              username: msg.users?.username || 'Unknown',
+              username: displayName,
               email: msg.users?.email || '',
               lastMessage: msg.message,
               lastMessageTime: msg.created_at,
@@ -98,7 +103,7 @@ export function SupportCenter() {
         (payload) => {
           const msg = payload.new as Message;
           if (msg.sender_type === 'user') {
-            toast.success(`${msg.user_id}님으로부터 새 문의가 도착했습니다`);
+            toast.success(`새 문의가 도착했습니다`);
           }
           loadUserChats();
         }
@@ -214,6 +219,36 @@ export function SupportCenter() {
     }
   };
 
+  const handleDeleteChat = async (userId: string, username: string) => {
+    if (!confirm(`"${username}"님과의 대화 내역을 모두 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`)) {
+      return;
+    }
+
+    try {
+      // 해당 사용자의 모든 메시지 삭제
+      const { error } = await supabase
+        .from('support_messages')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      // 선택된 채팅이면 선택 해제
+      if (selectedUserId === userId) {
+        setSelectedUserId(null);
+        setMessages([]);
+      }
+
+      // 목록에서 제거
+      setUserChats(prev => prev.filter(chat => chat.user_id !== userId));
+
+      toast.success('대화 내역이 삭제되었습니다');
+    } catch (error) {
+      console.error('Delete chat error:', error);
+      toast.error('삭제에 실패했습니다');
+    }
+  };
+
   const filteredChats = userChats.filter(
     chat =>
       chat.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -249,31 +284,47 @@ export function SupportCenter() {
             </div>
           ) : (
             filteredChats.map((chat) => (
-              <button
+              <div
                 key={chat.user_id}
-                onClick={() => setSelectedUserId(chat.user_id)}
-                className={`w-full p-4 border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors text-left ${
+                className={`relative group border-b border-slate-700/50 ${
                   selectedUserId === chat.user_id ? 'bg-slate-700/50' : ''
                 }`}
               >
-                <div className="flex items-start justify-between mb-1">
-                  <span className="text-white">{chat.username}</span>
-                  {chat.unreadCount > 0 && (
-                    <span className="bg-cyan-500 text-white text-xs px-2 py-0.5 rounded-full">
-                      {chat.unreadCount}
-                    </span>
-                  )}
-                </div>
-                <p className="text-slate-400 text-sm truncate mb-1">{chat.lastMessage}</p>
-                <p className="text-slate-500 text-xs">
-                  {new Date(chat.lastMessageTime).toLocaleString('ko-KR', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </p>
-              </button>
+                <button
+                  onClick={() => setSelectedUserId(chat.user_id)}
+                  className="w-full p-4 hover:bg-slate-700/30 transition-colors text-left"
+                >
+                  <div className="flex items-start justify-between mb-1">
+                    <span className="text-white">{chat.username}</span>
+                    {chat.unreadCount > 0 && (
+                      <span className="bg-cyan-500 text-white text-xs px-2 py-0.5 rounded-full">
+                        {chat.unreadCount}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-400 text-sm truncate mb-1">{chat.lastMessage}</p>
+                  <p className="text-slate-500 text-xs">
+                    {new Date(chat.lastMessageTime).toLocaleString('ko-KR', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </button>
+                
+                {/* 삭제 버튼 */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteChat(chat.user_id, chat.username);
+                  }}
+                  className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/50"
+                  title="대화 삭제"
+                >
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -301,37 +352,44 @@ export function SupportCenter() {
 
             {/* 메시지 영역 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.map((msg) => (
-                <div
-                  key={msg.message_id}
-                  className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}
-                >
+              {messages.map((msg) => {
+                // 이메일에서 @ 앞부분 추출
+                const displayName = msg.users?.email 
+                  ? msg.users.email.split('@')[0] 
+                  : msg.users?.username || 'Unknown';
+
+                return (
                   <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                      msg.sender_type === 'admin'
-                        ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white'
-                        : 'bg-slate-700 text-slate-200 border border-slate-600'
-                    }`}
+                    key={msg.message_id}
+                    className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {msg.sender_type === 'user' && (
-                      <p className="text-xs text-cyan-400 mb-1">{msg.users?.username}</p>
-                    )}
-                    <p className="text-sm break-words">{msg.message}</p>
-                    <p
-                      className={`text-xs mt-1 ${
-                        msg.sender_type === 'admin' ? 'text-cyan-100' : 'text-slate-500'
+                    <div
+                      className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                        msg.sender_type === 'admin'
+                          ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white'
+                          : 'bg-slate-700 text-slate-200 border border-slate-600'
                       }`}
                     >
-                      {new Date(msg.created_at).toLocaleString('ko-KR', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </p>
+                      {msg.sender_type === 'user' && (
+                        <p className="text-xs text-cyan-400 mb-1">{displayName}</p>
+                      )}
+                      <p className="text-sm break-words">{msg.message}</p>
+                      <p
+                        className={`text-xs mt-1 ${
+                          msg.sender_type === 'admin' ? 'text-cyan-100' : 'text-slate-500'
+                        }`}
+                      >
+                        {new Date(msg.created_at).toLocaleString('ko-KR', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
 

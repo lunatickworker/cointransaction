@@ -7,6 +7,7 @@ import { Withdrawal } from './components/Withdrawal';
 import { Transactions } from './components/Transactions';
 import { Swap } from './components/Swap';
 import { Settings } from './components/Settings';
+import { Support } from './components/Support';
 import { TransferRequest } from './components/TransferRequest';
 import { CoinPurchaseRequest } from './components/CoinPurchaseRequest';
 import { AccountVerification } from './components/AccountVerification';
@@ -17,7 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../utils/supabase/client';
 import { preloadCoinRates } from './utils/helpers';
 
-export type Screen = 'home' | 'wallets' | 'wallet-detail' | 'deposit' | 'withdrawal' | 'swap' | 'transactions' | 'settings' | 'transfer-request' | 'coin-purchase' | 'account-verification';
+export type Screen = 'home' | 'wallets' | 'wallet-detail' | 'deposit' | 'withdrawal' | 'swap' | 'transactions' | 'settings' | 'support' | 'transfer-request' | 'coin-purchase' | 'account-verification';
 export type CoinType = 'BTC' | 'ETH' | 'USDT' | 'USDC' | 'BNB' | 'KRWQ';
 
 export interface WalletData {
@@ -191,6 +192,9 @@ export function UserApp() {
           )}
           {currentScreen === 'settings' && (
             <Settings onNavigate={setCurrentScreen} />
+          )}
+          {currentScreen === 'support' && (
+            <Support onNavigate={setCurrentScreen} />
           )}
           {currentScreen === 'transfer-request' && (
             <TransferRequest

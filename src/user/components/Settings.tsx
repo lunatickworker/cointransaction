@@ -1,4 +1,4 @@
-import { ChevronRight, User, LogOut, CheckCircle, Crown, Bell, BellOff, MessageCircle, Send, X, Lock } from 'lucide-react';
+import { ChevronRight, User, LogOut, CheckCircle, Crown, Bell, BellOff, MessageCircle, Lock } from 'lucide-react';
 import { Screen } from '../App';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner@2.0.3';
@@ -10,27 +10,12 @@ interface SettingsProps {
   onNavigate: (screen: Screen) => void;
 }
 
-interface Message {
-  message_id: string;
-  user_id: string;
-  admin_id: string | null;
-  message: string;
-  sender_type: 'user' | 'admin';
-  created_at: string;
-  is_read: boolean;
-}
-
 export function Settings({ onNavigate }: SettingsProps) {
   const { user, logout } = useAuth();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [userLevel, setUserLevel] = useState<string>('Basic');
   const [gasPolicy, setGasPolicy] = useState<GasPaymentConfig | null>(null);
   const [isLoadingNotification, setIsLoadingNotification] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [isSending, setIsSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // 비밀번호 변경
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -96,70 +81,6 @@ export function Settings({ onNavigate }: SettingsProps) {
     }
   }, []);
 
-  // 메시지 로드 및 실시간 업데이트
-  useEffect(() => {
-    if (!showChat || !user) return;
-
-    const loadMessages = async () => {
-      const { data } = await supabase
-        .from('support_messages')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true });
-
-      if (data) {
-        setMessages(data);
-        // 읽지 않은 관리자 메시지 읽음 처리
-        const unreadAdminMessages = data.filter(m => m.sender_type === 'admin' && !m.is_read);
-        if (unreadAdminMessages.length > 0) {
-          await supabase
-            .from('support_messages')
-            .update({ is_read: true })
-            .in('message_id', unreadAdminMessages.map(m => m.message_id));
-        }
-      }
-    };
-
-    loadMessages();
-
-    // 실시간 메시지 구독
-    const messageSubscription = supabase
-      .channel('support_messages_user')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'support_messages',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          const newMsg = payload.new as Message;
-          setMessages(prev => [...prev, newMsg]);
-          
-          if (newMsg.sender_type === 'admin') {
-            toast.success('관리자로부터 새 메시지가 도착했습니다');
-            // 읽음 처리
-            supabase
-              .from('support_messages')
-              .update({ is_read: true })
-              .eq('message_id', newMsg.message_id)
-              .then();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      messageSubscription.unsubscribe();
-    };
-  }, [showChat, user]);
-
-  // 메시지 스크롤
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   const handleLogout = () => {
     logout();
     toast.success('로그아웃되었습니다');
@@ -181,32 +102,6 @@ export function Settings({ onNavigate }: SettingsProps) {
       toast.error('설정 변경에 실패했습니다');
     } finally {
       setIsLoadingNotification(false);
-    }
-  };
-
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !user) return;
-
-    setIsSending(true);
-    try {
-      const { error } = await supabase
-        .from('support_messages')
-        .insert({
-          user_id: user.id,
-          message: newMessage.trim(),
-          sender_type: 'user',
-          is_read: false
-        });
-
-      if (error) throw error;
-
-      setNewMessage('');
-      toast.success('메시지가 전송되었습니다');
-    } catch (error) {
-      console.error('Send message error:', error);
-      toast.error('메시지 전송에 실패했습니다');
-    } finally {
-      setIsSending(false);
     }
   };
 
@@ -322,91 +217,6 @@ export function Settings({ onNavigate }: SettingsProps) {
     
     return { text: '✗ 지원 불가', color: 'text-slate-400' };
   };
-
-  // 채팅 모달
-  if (showChat) {
-    return (
-      <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col">
-        {/* 헤더 */}
-        <div className="bg-slate-800/80 backdrop-blur border-b border-cyan-500/30 p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowChat(false)}
-                className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center hover:bg-slate-600 transition-colors"
-              >
-                <X className="w-5 h-5 text-cyan-400" />
-              </button>
-              <div>
-                <h2 className="text-white">고객센터</h2>
-                <p className="text-slate-400 text-sm">실시간 문의</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 메시지 영역 */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.length === 0 ? (
-            <div className="text-center py-12">
-              <MessageCircle className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400">아직 대화 내역이 없습니다</p>
-              <p className="text-slate-500 text-sm mt-1">궁금하신 점을 문의해주세요</p>
-            </div>
-          ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.message_id}
-                className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                    msg.sender_type === 'user'
-                      ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white'
-                      : 'bg-slate-800 text-slate-200 border border-slate-700'
-                  }`}
-                >
-                  <p className="text-sm break-words">{msg.message}</p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      msg.sender_type === 'user' ? 'text-cyan-100' : 'text-slate-500'
-                    }`}
-                  >
-                    {new Date(msg.created_at).toLocaleTimeString('ko-KR', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </p>
-                </div>
-              </div>
-            ))
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* 입력 영역 */}
-        <div className="bg-slate-800/80 backdrop-blur border-t border-cyan-500/30 p-4">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="메시지를 입력하세요..."
-              className="flex-1 bg-slate-700 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500/50 transition-colors"
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={!newMessage.trim() || isSending}
-              className="w-12 h-12 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-500 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-cyan-500/50 transition-all"
-            >
-              <Send className="w-5 h-5 text-white" />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 pb-20">
@@ -558,7 +368,7 @@ export function Settings({ onNavigate }: SettingsProps) {
           <div className="text-slate-300">고객 지원</div>
         </div>
         <button 
-          onClick={() => setShowChat(true)}
+          onClick={() => onNavigate('support')}
           className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-700/30 transition-colors border-t border-slate-700/50"
         >
           <div className="flex items-center gap-3">

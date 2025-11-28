@@ -524,6 +524,10 @@
     top: 50%;
   }
 
+  .top-4 {
+    top: calc(var(--spacing) * 4);
+  }
+
   .top-12 {
     top: calc(var(--spacing) * 12);
   }
@@ -1855,16 +1859,6 @@
     }
   }
 
-  .bg-slate-800\/80 {
-    background-color: color-mix(in srgb, oklch(.279 .041 260.031) 80%, transparent);
-  }
-
-  @supports (color: color-mix(in lab, red, red)) {
-    .bg-slate-800\/80 {
-      background-color: color-mix(in oklab, var(--color-slate-800) 80%, transparent);
-    }
-  }
-
   .bg-slate-800\/90 {
     background-color: color-mix(in srgb, oklch(.279 .041 260.031) 90%, transparent);
   }
@@ -2540,6 +2534,10 @@
     padding-bottom: calc(var(--spacing) * 2);
   }
 
+  .pb-6 {
+    padding-bottom: calc(var(--spacing) * 6);
+  }
+
   .pb-8 {
     padding-bottom: calc(var(--spacing) * 8);
   }
@@ -2753,6 +2751,10 @@
     color: var(--color-slate-500);
   }
 
+  .opacity-0 {
+    opacity: 0;
+  }
+
   .opacity-20 {
     opacity: .2;
   }
@@ -2825,12 +2827,6 @@
 
   .filter {
     filter: var(--tw-blur, ) var(--tw-brightness, ) var(--tw-contrast, ) var(--tw-grayscale, ) var(--tw-hue-rotate, ) var(--tw-invert, ) var(--tw-saturate, ) var(--tw-sepia, ) var(--tw-drop-shadow, );
-  }
-
-  .backdrop-blur {
-    --tw-backdrop-blur: blur(8px);
-    -webkit-backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, ) var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, ) var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, ) var(--tw-backdrop-sepia, );
-    backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, ) var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, ) var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, ) var(--tw-backdrop-sepia, );
   }
 
   .backdrop-blur-md {
@@ -2979,6 +2975,12 @@
   @media (hover: hover) {
     .group-hover\:opacity-40:is(:where(.group):hover *) {
       opacity: .4;
+    }
+  }
+
+  @media (hover: hover) {
+    .group-hover\:opacity-100:is(:where(.group):hover *) {
+      opacity: 1;
     }
   }
 
