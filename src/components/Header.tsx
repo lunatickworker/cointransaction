@@ -21,8 +21,9 @@ export function Header({ onNavigate }: HeaderProps) {
   const { user, logout } = useAuth();
   const [walletBalances, setWalletBalances] = useState<WalletBalance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState<'signup' | 'verification' | 'purchase' | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<'signup' | 'verification' | 'purchase' | 'support' | null>(null);
   const { notifications } = useNotifications(user?.id, user?.role === 'admin');
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
 
   useEffect(() => {
     if (user?.id) {
@@ -44,6 +45,43 @@ export function Header({ onNavigate }: HeaderProps) {
     }
   }, [user?.id]);
 
+  // 고객센터 읽지 않은 메시지 카운트 (관리자만)
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+
+    const fetchSupportUnreadCount = async () => {
+      const { count, error } = await supabase
+        .from('support_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('sender_type', 'user')
+        .eq('is_read', false);
+
+      if (!error && count !== null) {
+        setSupportUnreadCount(count);
+      }
+    };
+
+    fetchSupportUnreadCount();
+
+    // 실시간 업데이트
+    const supportChannel = supabase
+      .channel('support-messages-header')
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'support_messages' 
+        },
+        () => fetchSupportUnreadCount()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(supportChannel);
+    };
+  }, [user?.role]);
+
   const fetchWalletBalances = async () => {
     if (!user?.id) return;
     
@@ -64,7 +102,7 @@ export function Header({ onNavigate }: HeaderProps) {
     toast.success('로그아웃되었습니다');
   };
 
-  const handleCategoryClick = (category: 'signup' | 'verification' | 'purchase' | null) => {
+  const handleCategoryClick = (category: 'signup' | 'verification' | 'purchase' | 'support' | null) => {
     if (!onNavigate || !category) return;
     
     // 해당 관리 페이지로 이동
@@ -74,6 +112,8 @@ export function Header({ onNavigate }: HeaderProps) {
       onNavigate('account-verifications'); // 계좌 인증 관리 페이지
     } else if (category === 'purchase') {
       onNavigate('deposit-withdrawal'); // 입출금 관리 페이지
+    } else if (category === 'support') {
+      onNavigate('support-center'); // 고객센터 페이지
     }
     
     setCategoryFilter(null); // 필터 초기화
@@ -127,6 +167,7 @@ export function Header({ onNavigate }: HeaderProps) {
             selectedCategory={categoryFilter}
             onCategoryClick={handleCategoryClick}
             isAdmin={true}
+            supportUnreadCount={supportUnreadCount}
           />
         )}
         

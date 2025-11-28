@@ -131,6 +131,7 @@ export function Support({ onNavigate }: SupportProps) {
       <div className="bg-slate-800/50 border border-cyan-500/30 rounded-xl p-4" style={{ boxShadow: '0 0 10px rgba(6, 182, 212, 0.1)' }}>
         <h2 className="text-white mb-2">고객센터</h2>
         <p className="text-slate-400 text-sm">실시간 문의 서비스입니다</p>
+        <p className="text-slate-500 text-xs mt-2">* 모든 시간은 UTC 기준입니다</p>
       </div>
 
       {/* 메시지 영역 */}

@@ -40,52 +40,62 @@ export function SupportCenter() {
   // 사용자별 채팅 목록 로드
   useEffect(() => {
     const loadUserChats = async () => {
+      // 1. 모든 메시지 가져오기
       const { data: allMessages } = await supabase
         .from('support_messages')
-        .select(`
-          *,
-          users:user_id (
-            username,
-            email
-          )
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
 
-      if (allMessages) {
-        // 사용자별로 그룹화
-        const chatMap = new Map<string, UserChat>();
+      if (!allMessages) return;
 
-        allMessages.forEach((msg: any) => {
-          const userId = msg.user_id;
-          const existing = chatMap.get(userId);
+      // 2. 고유한 user_id 추출
+      const uniqueUserIds = [...new Set(allMessages.map(msg => msg.user_id))];
 
-          if (!existing || new Date(msg.created_at) > new Date(existing.lastMessageTime)) {
-            const unreadCount = allMessages.filter(
-              (m: any) => m.user_id === userId && m.sender_type === 'user' && !m.is_read
-            ).length;
+      // 3. users 테이블에서 사용자 정보 가져오기
+      const { data: usersData } = await supabase
+        .from('users')
+        .select('user_id, username, email')
+        .in('user_id', uniqueUserIds);
 
-            // 이메일에서 @ 앞부분 추출 (예: hong@example.com → hong)
-            const displayName = msg.users?.email 
-              ? msg.users.email.split('@')[0] 
-              : msg.users?.username || 'Unknown';
+      // 4. user_id를 키로 하는 Map 생성
+      const usersMap = new Map(
+        usersData?.map(u => [u.user_id, u]) || []
+      );
 
-            chatMap.set(userId, {
-              user_id: userId,
-              username: displayName,
-              email: msg.users?.email || '',
-              lastMessage: msg.message,
-              lastMessageTime: msg.created_at,
-              unreadCount
-            });
-          }
-        });
+      // 5. 사용자별로 그룹화
+      const chatMap = new Map<string, UserChat>();
 
-        const chats = Array.from(chatMap.values()).sort(
-          (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
-        );
+      allMessages.forEach((msg: any) => {
+        const userId = msg.user_id;
+        const existing = chatMap.get(userId);
 
-        setUserChats(chats);
-      }
+        if (!existing || new Date(msg.created_at) > new Date(existing.lastMessageTime)) {
+          const unreadCount = allMessages.filter(
+            (m: any) => m.user_id === userId && m.sender_type === 'user' && !m.is_read
+          ).length;
+
+          const userData = usersMap.get(userId);
+          // 이메일에서 @ 앞부분 추출 (예: hong@example.com → hong)
+          const displayName = userData?.email 
+            ? userData.email.split('@')[0] 
+            : userData?.username || 'Unknown';
+
+          chatMap.set(userId, {
+            user_id: userId,
+            username: displayName,
+            email: userData?.email || '',
+            lastMessage: msg.message,
+            lastMessageTime: msg.created_at,
+            unreadCount
+          });
+        }
+      });
+
+      const chats = Array.from(chatMap.values()).sort(
+        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+      );
+
+      setUserChats(chats);
     };
 
     loadUserChats();
@@ -262,7 +272,7 @@ export function SupportCenter() {
       {/* 사용자 목록 */}
       <div className="w-80 bg-slate-800/50 border border-slate-700 rounded-xl flex flex-col">
         {/* 검색 */}
-        <div className="p-4 border-b border-slate-700">
+        <div className="p-4 border-b border-slate-700 space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
@@ -273,6 +283,9 @@ export function SupportCenter() {
               className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-10 pr-4 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500/50 transition-colors"
             />
           </div>
+          <p className="text-xs text-slate-500 text-center">
+            * 모든 시간은 UTC 기준입니다
+          </p>
         </div>
 
         {/* 사용자 리스트 */}

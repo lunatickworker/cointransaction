@@ -1,12 +1,13 @@
-import { UserPlus, FileCheck, ShoppingCart } from 'lucide-react';
+import { UserPlus, FileCheck, ShoppingCart, MessageCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Notification } from '../utils/supabase/types';
 
 interface NotificationIconsProps {
   notifications: Notification[];
-  onCategoryClick: (category: 'signup' | 'verification' | 'purchase' | null) => void;
-  selectedCategory?: 'signup' | 'verification' | 'purchase' | null;
+  onCategoryClick: (category: 'signup' | 'verification' | 'purchase' | 'support' | null) => void;
+  selectedCategory?: 'signup' | 'verification' | 'purchase' | 'support' | null;
   isAdmin?: boolean;
+  supportUnreadCount?: number;
 }
 
 const COLORS = {
@@ -28,10 +29,17 @@ const COLORS = {
     glow: 'rgba(168, 85, 247, 0.6)',
     glowStrong: 'rgba(168, 85, 247, 1)',
   },
+  cyan: {
+    text: '#06b6d4',
+    bg: '#06b6d4',
+    glow: 'rgba(6, 182, 212, 0.6)',
+    glowStrong: 'rgba(6, 182, 212, 1)',
+  },
 };
 
-export function NotificationIcons({ notifications, onCategoryClick, selectedCategory, isAdmin = false }: NotificationIconsProps) {
+export function NotificationIcons({ notifications, onCategoryClick, selectedCategory, isAdmin = false, supportUnreadCount = 0 }: NotificationIconsProps) {
   const [pulseCategory, setPulseCategory] = useState<string | null>(null);
+  const [prevSupportCount, setPrevSupportCount] = useState(supportUnreadCount);
 
   // 카테고리별 카운트 계산
   const signupCount = notifications.filter(n => !n.read && n.type === 'signup').length;
@@ -59,6 +67,17 @@ export function NotificationIcons({ notifications, onCategoryClick, selectedCate
     }
   }, [notifications]);
 
+  // 고객센터 알림이 증가할 때 펄스 효과
+  useEffect(() => {
+    if (supportUnreadCount > prevSupportCount) {
+      setPulseCategory('support');
+      const timer = setTimeout(() => setPulseCategory(null), 2000);
+      setPrevSupportCount(supportUnreadCount);
+      return () => clearTimeout(timer);
+    }
+    setPrevSupportCount(supportUnreadCount);
+  }, [supportUnreadCount]);
+
   const IconButton = ({ 
     icon: Icon, 
     count, 
@@ -68,8 +87,8 @@ export function NotificationIcons({ notifications, onCategoryClick, selectedCate
   }: { 
     icon: any; 
     count: number; 
-    colorKey: 'green' | 'blue' | 'purple';
-    category: 'signup' | 'verification' | 'purchase';
+    colorKey: 'green' | 'blue' | 'purple' | 'cyan';
+    category: 'signup' | 'verification' | 'purchase' | 'support';
     label: string;
   }) => {
     const isPulsing = pulseCategory === category;
@@ -145,6 +164,17 @@ export function NotificationIcons({ notifications, onCategoryClick, selectedCate
         category="purchase"
         label="구매요청 알림"
       />
+      
+      {/* 고객센터 알림 - 관리자만 */}
+      {isAdmin && (
+        <IconButton 
+          icon={MessageCircle} 
+          count={supportUnreadCount} 
+          colorKey="cyan"
+          category="support"
+          label="고객센터 알림"
+        />
+      )}
     </div>
   );
 }
