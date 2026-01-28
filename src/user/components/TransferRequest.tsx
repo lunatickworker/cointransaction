@@ -205,12 +205,12 @@ export function TransferRequest({ wallets, selectedCoin, onNavigate, onSelectCoi
       <div className="flex items-center gap-4">
         <button
           onClick={() => onNavigate('home')}
-          className="w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
+          className="lg:hidden w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
         >
           <ArrowLeft className="w-5 h-5 text-cyan-400" />
         </button>
         <div>
-          <h2 className="text-white text-xl">코인 구매 요청</h2>
+          <h2 className="text-white text-xl lg:text-2xl">코인 구매 요청</h2>
           <p className="text-slate-400 text-sm">관리자 승인 후 지갑에 입금됩니다</p>
         </div>
       </div>

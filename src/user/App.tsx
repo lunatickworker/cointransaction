@@ -13,6 +13,7 @@ import { CoinPurchaseRequest } from './components/CoinPurchaseRequest';
 import { AccountVerification } from './components/AccountVerification';
 import { BottomNav } from './components/BottomNav';
 import { TopBar } from './components/TopBar';
+import { Sidebar } from './components/Sidebar';
 import { MobileLogin } from './components/MobileLogin';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../utils/supabase/client';
@@ -131,12 +132,18 @@ export function UserApp() {
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
       </div>
 
-      {/* Mobile Container */}
-      <div className="relative max-w-md mx-auto min-h-screen bg-slate-900/30 backdrop-blur-xl border-x border-slate-700/50">
-        <TopBar currentScreen={currentScreen} />
+      {/* PC: 왼쪽 사이드바 */}
+      <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+
+      {/* Main Container */}
+      <div className="relative w-full lg:ml-64 min-h-screen">
+        {/* Mobile: TopBar, PC: 숨김 */}
+        <div className="lg:hidden">
+          <TopBar currentScreen={currentScreen} />
+        </div>
 
         {/* Content */}
-        <div className="p-4 pb-24 overflow-y-auto">
+        <div className="w-full p-4 pb-24 lg:pb-8 lg:p-8 max-w-7xl mx-auto">
           {currentScreen === 'home' && (
             <Home
               wallets={wallets}
@@ -218,8 +225,10 @@ export function UserApp() {
         </div>
       </div>
       
-      {/* Bottom Nav - Outside mobile container for proper fixed positioning */}
-      <BottomNav currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+      {/* Mobile: Bottom Nav, PC: 숨김 */}
+      <div className="lg:hidden">
+        <BottomNav currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+      </div>
     </div>
   );
 }

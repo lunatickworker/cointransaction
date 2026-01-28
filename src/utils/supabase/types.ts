@@ -110,7 +110,7 @@ export interface IpWhitelist {
 export interface Notification {
   id: string;
   user_id: string;
-  type: 'signup' | 'verification_request' | 'verification_approved' | 'verification_rejected' | 
+  type: 'signup' | 'account_verification' | 'verification_request' | 'verification_approved' | 'verification_rejected' | 
         'purchase_request' | 'purchase_approved' | 'purchase_rejected' | 'purchase_completed' |
         'deposit' | 'withdrawal';
   title: string;

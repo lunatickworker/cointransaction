@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Send, CheckCircle, Clock, XCircle, Info, Wallet } from 'lucide-react';
+import { ArrowLeft, Send, CheckCircle, Clock, XCircle, Info, Wallet, AlertCircle } from 'lucide-react';
 import { Screen } from '../App';
 import { supabase } from '../../utils/supabase/client';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
+
+// Supabase URL and Anon Key (hardcoded as per client.ts)
+const SUPABASE_URL = 'https://mzoeeqmtvlnyonicycvg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
 
 interface AccountVerificationProps {
   onNavigate: (screen: Screen) => void;
@@ -16,11 +20,7 @@ interface VerificationRequest {
   account_number: string;
   account_holder: string;
   verification_code?: string;
-  status: 'pending' | 'code_sent' | 'code_submitted' | 'verified' | 'rejected';
-  verification_code_sent?: string;
-  user_input_code?: string;
-  code_verified?: boolean;
-  code_sent_at?: string;
+  status?: 'pending' | 'verified' | 'rejected' | null;
   smart_account_address?: string;
   created_at: string;
   verified_at?: string;
@@ -32,11 +32,12 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountHolder, setAccountHolder] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [userInputCode, setUserInputCode] = useState(''); // 사용자가 입력하는 인증 코드
+  const [userInputCode, setUserInputCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState<VerificationRequest | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [codeVerified, setCodeVerified] = useState(false);
+  const [codeError, setCodeError] = useState('');
 
   // 기존 인증 상태 확인
   useEffect(() => {
@@ -57,9 +58,11 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
           console.log('Verification status changed:', payload);
           fetchVerificationStatus();
           
-          // 코드 전송 알림
-          if ((payload.new as any)?.status === 'code_sent') {
-            toast.success('통장 인증을 확인해주세요!');
+          // 관리자가 승인/거부했을 때 알림
+          if ((payload.new as any)?.status === 'verified') {
+            toast.success('계좌 인증이 승인되었습니다! 지갑이 활성화되었습니다.');
+          } else if ((payload.new as any)?.status === 'rejected') {
+            toast.error('계좌 인증이 거부되었습니다.');
           }
         }
       )
@@ -88,6 +91,10 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
 
       if (data) {
         setVerificationStatus(data);
+        // 이미 pending이면 검증 완료 상태
+        if (data.status === 'pending') {
+          setCodeVerified(true);
+        }
       }
     } catch (error: any) {
       console.error('Verification status fetch error:', error);
@@ -108,64 +115,120 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
       return;
     }
 
+    // 중복 제출 방지
+    if (isSubmitting) {
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase
-        .from('account_verifications')
-        .insert({
-          user_id: user?.id,
-          bank_name: bankName,
-          account_number: accountNumber.replace(/-/g, ''),
-          account_holder: accountHolder,
-          verification_code: verificationCode || null,
-          status: 'pending',
-        });
+      // Edge Function 호출
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/make-server-b6d5667f/api/account-verification/request`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            user_id: user?.id,
+            bank_name: bankName,
+            account_number: accountNumber,
+            account_holder: accountHolder,
+          }),
+        }
+      );
 
-      if (error) throw error;
+      console.log('🔍 Response Status:', response.status);
+      console.log('🔍 Response OK:', response.ok);
+      console.log('🔍 Response Headers:', Object.fromEntries(response.headers.entries()));
 
-      toast.success('1원 계좌인증 신청이 완료되었습니다');
+      const result = await response.json();
+      console.log('🔍 Response Body:', result);
+
+      if (!response.ok) {
+        console.error('❌ Error Code:', result.code || 'UNKNOWN');
+        console.error('❌ Error Message:', result.error || 'Unknown error');
+        console.error('❌ Full Error Object:', result);
+        throw new Error(result.error || '계좌 인증 요청 실패');
+      }
+
+      // 임시 시나리오: API에서 받은 authCode를 표시 (디버깅용)
+      if (result.authCode) {
+        toast.success(`승인 요청 완료! (인증코드: ${result.authCode})`);
+        toast.info('관리자 검토를 기다려주세요', { duration: 5000 });
+      } else {
+        toast.success('승인 요청이 완료되었습니다');
+        toast.info('관리자 검토를 기다려주세요', { duration: 5000 });
+      }
       
       // 상태 새로고침
       await fetchVerificationStatus();
       
-      // 입력 필드 초기화
-      setBankName('');
-      setAccountNumber('');
-      setAccountHolder('');
-      setVerificationCode('');
-
     } catch (error: any) {
-      console.error('Verification submit error:', error);
-      toast.error('신청 중 오류가 발생했습니다');
+      console.error('❌ Verification submit error:', error);
+      console.error('❌ Error name:', error.name);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      toast.error(error.message || '신청 중 오류가 발생했습니다');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // 인증 코드 제출 (사용자가 통장 확인 후 입력)
-  const handleSubmitCode = async () => {
+  // 인증번호 입력 시 즉시 검증
+  useEffect(() => {
+    if (!verificationStatus || !verificationStatus.verification_code) return;
     if (!userInputCode.trim()) {
-      toast.error('인증 코드를 입력해주세요');
+      setCodeVerified(false);
+      setCodeError('');
       return;
     }
 
-    if (!verificationStatus) return;
+    // 즉시 검증
+    if (userInputCode.trim() === verificationStatus.verification_code) {
+      setCodeVerified(true);
+      setCodeError('');
+    } else {
+      setCodeVerified(false);
+      setCodeError('코드가 일치하지 않습니다');
+    }
+  }, [userInputCode, verificationStatus]);
+
+  // 승인 요청 제출
+  const handleSubmitCode = async () => {
+    if (!verificationStatus || !codeVerified) {
+      toast.error('인증번호를 확인해주세요');
+      return;
+    }
 
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase
-        .from('account_verifications')
-        .update({
-          user_input_code: userInputCode.trim(),
-          status: 'code_submitted',
-        })
-        .eq('verification_id', verificationStatus.verification_id);
+      // Edge Function 호출
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/make-server-b6d5667f/api/account-verification/submit`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            verification_id: verificationStatus.verification_id,
+          }),
+        }
+      );
 
-      if (error) throw error;
+      const result = await response.json();
 
-      toast.success('인증 코드가 제출되었습니다. 관리자 확인을 기다려주세요.');
+      if (!response.ok) {
+        throw new Error(result.error || '승인 요청 실패');
+      }
+
+      toast.success('관리자 승인을 요청했습니다');
       
       // 상태 새로고침
       await fetchVerificationStatus();
@@ -173,7 +236,7 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
 
     } catch (error: any) {
       console.error('Code submit error:', error);
-      toast.error('코드 제출 중 오류가 발생했습니다');
+      toast.error(error.message || '승인 요청 중 오류가 발생했습니다');
     } finally {
       setIsSubmitting(false);
     }
@@ -186,20 +249,6 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/30">
             <CheckCircle className="w-5 h-5 text-green-400" />
             <span className="text-green-400">인증 완료</span>
-          </div>
-        );
-      case 'code_submitted':
-        return (
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30">
-            <Clock className="w-5 h-5 text-cyan-400" />
-            <span className="text-cyan-400">승인 요청</span>
-          </div>
-        );
-      case 'code_sent':
-        return (
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 border border-purple-500/30">
-            <Info className="w-5 h-5 text-purple-400" />
-            <span className="text-purple-400">코드 확인 필요</span>
           </div>
         );
       case 'pending':
@@ -235,12 +284,12 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={() => onNavigate('settings')}
-          className="w-10 h-10 rounded-full bg-slate-800/50 border border-cyan-500/30 flex items-center justify-center hover:bg-cyan-500/10 transition-colors"
+          className="lg:hidden w-10 h-10 rounded-full bg-slate-800/50 border border-cyan-500/30 flex items-center justify-center hover:bg-cyan-500/10 transition-colors"
         >
           <ArrowLeft className="w-5 h-5 text-cyan-400" />
         </button>
         <div>
-          <h1 className="text-white">1원 계좌인증</h1>
+          <h1 className="text-white text-xl lg:text-2xl">1원 계좌인증</h1>
           <p className="text-slate-400 text-sm">KYC 대신 계좌인증으로 간편하게</p>
         </div>
       </div>
@@ -252,7 +301,7 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
           <div className="relative bg-slate-800/90 border border-cyan-500/50 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-white">인증 상태</h3>
-              {getStatusBadge(verificationStatus.status)}
+              {getStatusBadge(verificationStatus.status || 'pending')}
             </div>
 
             <div className="space-y-3">
@@ -308,25 +357,11 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
                   <p className="text-yellow-400 text-sm">
                     ⏳ 관리자 검토 중입니다. 잠시만 기다려주세요.
                   </p>
-                </div>
-              )}
-
-              {verificationStatus.status === 'code_sent' && (
-                <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
-                  <p className="text-purple-400 text-sm mb-2">
-                    📬 통장을 확인해주세요!
-                  </p>
-                  <p className="text-slate-300 text-sm">
-                    1원이 입금되었습니다. 입금자명을 확인하고 아래에 입력해주세요.
-                  </p>
-                </div>
-              )}
-
-              {verificationStatus.status === 'code_submitted' && (
-                <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
-                  <p className="text-cyan-400 text-sm">
-                    ✅ 인증 코드가 제출되었습니다. 관리자가 확인 중입니다.
-                  </p>
+                  {verificationStatus.verification_code && (
+                    <p className="text-slate-400 text-xs mt-2">
+                      인증코드: {verificationStatus.verification_code} (참고용)
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -348,16 +383,48 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
                 className="w-full bg-slate-800/50 border border-cyan-500/30 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors"
               >
                 <option value="">은행을 선택하세요</option>
-                <option value="KB국민은행">KB국민은행</option>
-                <option value="신한은행">신한은행</option>
-                <option value="우리은행">우리은행</option>
-                <option value="하나은행">하나은행</option>
-                <option value="NH농협은행">NH농협은행</option>
+                <option value="한국은행">한국은행</option>
+                <option value="산업은행">산업은행</option>
                 <option value="IBK기업은행">IBK기업은행</option>
-                <option value="SC제일은행">SC제일은행</option>
+                <option value="KB국민은행">KB국민은행</option>
+                <option value="수협은행">수협은행</option>
+                <option value="수출입은행">수출입은행</option>
+                <option value="NH농협은행">NH농협은행</option>
+                <option value="지역농축협">지역농축협</option>
+                <option value="우리은행">우리은행</option>
+                <option value="한국씨티은행">한국씨티은행</option>
+                <option value="대구은행">대구은행</option>
+                <option value="부산은행">부산은행</option>
+                <option value="광주은행">광주은행</option>
+                <option value="제주은행">제주은행</option>
+                <option value="전북은행">전북은행</option>
+                <option value="경남은행">경남은행</option>
+                <option value="우리카드">우리카드</option>
+                <option value="하나카드">하나카드</option>
+                <option value="새마을금고">새마을금고</option>
+                <option value="신협">신협</option>
+                <option value="저축은행">저축은행</option>
+                <option value="모건스탠리은행">모건스탠리은행</option>
+                <option value="HSBC은행">HSBC은행</option>
+                <option value="도이치은행">도이치은행</option>
+                <option value="제이피모간체이스은행">제이피모간체이스은행</option>
+                <option value="미즈호은행">미즈호은행</option>
+                <option value="엠유에프지은행">엠유에프지은행</option>
+                <option value="BOA은행">BOA은행</option>
+                <option value="비엔피파리바은행">비엔피파리바은행</option>
+                <option value="중국공상은행">중국공상은행</option>
+                <option value="산림조합">산림조합</option>
+                <option value="대화은행">대화은행</option>
+                <option value="교보증권">교보증권</option>
+                <option value="중국건설은행">중국건설은행</option>
+                <option value="우체국">우체국</option>
+                <option value="신한금융투자">신한금융투자</option>
+                <option value="KB증권">KB증권</option>
+                <option value="하나은행">하나은행</option>
+                <option value="신한은행">신한은행</option>
+                <option value="K뱅크">K뱅크</option>
                 <option value="카카오뱅크">카카오뱅크</option>
-                <option value="토스뱅크">토스뱅크</option>
-                <option value="케이뱅크">케이뱅크</option>
+                <option value="유안타증권">유안타증권</option>
               </select>
             </div>
 
@@ -384,21 +451,6 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
                 className="w-full bg-slate-800/50 border border-cyan-500/30 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
               />
             </div>
-
-            {/* 인증코드 (선택사항) */}
-            <div>
-              <label className="block text-slate-300 mb-3">
-                입금자명 (선택사항)
-                <span className="text-slate-500 text-sm ml-2">관리자가 1원 입금 시 사용</span>
-              </label>
-              <input
-                type="text"
-                value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value)}
-                placeholder="예: 홍길동123"
-                className="w-full bg-slate-800/50 border border-cyan-500/30 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
-              />
-            </div>
           </div>
 
           {/* 신청 버튼 */}
@@ -415,7 +467,7 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
           <div className="relative">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500/20 to-cyan-500/20 rounded-xl blur"></div>
             <div className="relative bg-slate-800/50 border border-purple-500/30 rounded-xl p-4">
-              <h4 className="text-purple-400 mb-3">인증 절차</h4>
+              <h4 className="text-purple-400 mb-3">인증 절차 (임시 테스트 버전)</h4>
               <ol className="space-y-2 text-slate-300 text-sm">
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 shrink-0">1.</span>
@@ -423,49 +475,35 @@ export function AccountVerification({ onNavigate }: AccountVerificationProps) {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 shrink-0">2.</span>
-                  <span>관리자가 해당 계좌로 1원 입금 (입금자명 확인용)</span>
+                  <span>테스트 API에서 인증코드 자동 생성 및 검증</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 shrink-0">3.</span>
-                  <span>관리자가 계좌 확인 후 승인</span>
+                  <span className="text-yellow-400">승인 요청 상태로 자동 변경됨 (코드 입력 불필요)</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 shrink-0">4.</span>
+                  <span>관리자가 계좌 확인 후 승인</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-purple-400 shrink-0">5.</span>
                   <span className="text-cyan-400">Smart Account 자동 생성 및 지갑 활성화 ✨</span>
                 </li>
               </ol>
+              <div className="mt-3 pt-3 border-t border-purple-500/30">
+                <p className="text-purple-400 text-xs">
+                  💡 프로덕션에서는 실제 1원 입금 후 통장 확인 절차가 필요합니다.
+                </p>
+              </div>
             </div>
           </div>
         </>
       )}
 
-      {/* 코드 제출 폼 */}
-      {verificationStatus && verificationStatus.status === 'code_sent' && (
-        <>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-slate-300 mb-3">인증 코드 입력</label>
-              <input
-                type="text"
-                value={userInputCode}
-                onChange={(e) => setUserInputCode(e.target.value)}
-                placeholder="인증 코드 입력"
-                className="w-full bg-slate-800/50 border border-cyan-500/30 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
-              />
-            </div>
-          </div>
+      {/* 코드 제출 폼 - pending 상태에서는 표시하지 않음 (임시 시나리오) */}
+      {/* 이미 자동으로 승인 대기 상태이므로 추가 입력 불필요 */}
 
-          {/* 코드 제출 버튼 */}
-          <button
-            onClick={handleSubmitCode}
-            disabled={isSubmitting || !userInputCode.trim()}
-            className="w-full bg-slate-800/50 border-2 border-cyan-500/50 text-cyan-400 py-5 rounded-2xl flex items-center justify-center gap-2 hover:bg-cyan-500/10 hover:border-cyan-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg"
-          >
-            <Send className="w-6 h-6" />
-            {isSubmitting ? '제출 중...' : '인증 코드 제출'}
-          </button>
-        </>
-      )}
+      {/* 코드 입력 폼 - status가 없을 때 (인증 요청 직후) - 더 이상 사용되지 않음 */}
     </div>
   );
 }

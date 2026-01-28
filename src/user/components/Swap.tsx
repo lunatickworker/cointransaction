@@ -320,11 +320,16 @@ export function Swap({ wallets, selectedCoin, onNavigate, onSelectCoin }: SwapPr
     <div className="space-y-6 pb-8">
       <button 
         onClick={() => onNavigate('home')} 
-        className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 transition-colors"
+        className="lg:hidden flex items-center gap-2 text-cyan-400 hover:text-cyan-300 transition-colors"
       >
         <ArrowLeft className="w-5 h-5" />
         <span>뒤로</span>
       </button>
+      
+      <div className="hidden lg:block">
+        <h2 className="text-white text-2xl">스왑</h2>
+        <p className="text-slate-400 text-sm">코인을 교환하세요</p>
+      </div>
 
       <div className="text-center">
         <h2 className="text-white mb-2">코인 교환</h2>

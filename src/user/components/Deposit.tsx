@@ -18,6 +18,32 @@ export function Deposit({ wallets, selectedCoin, onNavigate, onSelectCoin }: Dep
   const [recentDeposits, setRecentDeposits] = useState<any[]>([]);
   const [isListening, setIsListening] = useState(false);
   const [coins, setCoins] = useState<CoinType[]>([]);
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
+
+  // 코인 아이콘 로드
+  useEffect(() => {
+    const fetchCoinIcons = async () => {
+      try {
+        const { data: coinData } = await supabase
+          .from('supported_tokens')
+          .select('symbol, icon_url');
+        
+        if (coinData) {
+          const iconMap = new Map<string, string>();
+          coinData.forEach((coin: any) => {
+            if (coin.icon_url) {
+              iconMap.set(coin.symbol, coin.icon_url);
+            }
+          });
+          setCoinIcons(iconMap);
+        }
+      } catch (error) {
+        console.error('Error fetching coin icons:', error);
+      }
+    };
+
+    fetchCoinIcons();
+  }, []);
 
   // 지갑이 있는 코인만 표시
   useEffect(() => {
@@ -107,25 +133,25 @@ export function Deposit({ wallets, selectedCoin, onNavigate, onSelectCoin }: Dep
   const handleCopyAddress = async () => {
     if (selectedWallet?.address) {
       try {
-        // 클립보드 API 시도
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(selectedWallet.address);
+        // Fallback 방식을 기본으로 사용 (권한 문제 회피)
+        const textArea = document.createElement('textarea');
+        textArea.value = selectedWallet.address;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
           setCopiedAddress(true);
           toast.success('주소가 복사되었습니다');
           setTimeout(() => setCopiedAddress(false), 2000);
         } else {
-          // Fallback: 텍스트 선택
-          const textArea = document.createElement('textarea');
-          textArea.value = selectedWallet.address;
-          textArea.style.position = 'fixed';
-          textArea.style.opacity = '0';
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textArea);
-          setCopiedAddress(true);
-          toast.success('주소가 복사되었습니다');
-          setTimeout(() => setCopiedAddress(false), 2000);
+          throw new Error('Copy command failed');
         }
       } catch (err) {
         // 복사 실패시 사용자에게 주소 표시
@@ -165,12 +191,12 @@ export function Deposit({ wallets, selectedCoin, onNavigate, onSelectCoin }: Dep
       <div className="flex items-center gap-4">
         <button
           onClick={() => onNavigate('home')}
-          className="w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
+          className="lg:hidden w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
         >
           <ArrowLeft className="w-5 h-5 text-cyan-400" />
         </button>
         <div>
-          <h2 className="text-white text-xl">입금</h2>
+          <h2 className="text-white text-xl lg:text-2xl">입금</h2>
           <p className="text-slate-400 text-sm">코인을 입금하세요</p>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowUpRight, ArrowDownLeft, Repeat, TrendingUp, Eye, EyeOff, Zap, ShoppingCart } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Repeat, TrendingUp, Eye, EyeOff, Zap, ShoppingCart, Coins } from 'lucide-react';
 import { Screen, WalletData, Transaction } from '../App';
 import { supabase } from '../../utils/supabase/client';
 import { useAuth } from '../../contexts/AuthContext';
@@ -18,6 +18,32 @@ export function Home({ wallets, transactions, onNavigate, onSelectCoin }: HomePr
   const [todayChange, setTodayChange] = useState(0);
   const [prices, setPrices] = useState<{ [key: string]: number }>({});
   const [accountVerified, setAccountVerified] = useState<boolean>(false);
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
+
+  // 코인 아이콘 로드
+  useEffect(() => {
+    const fetchCoinIcons = async () => {
+      try {
+        const { data: coins } = await supabase
+          .from('supported_tokens')
+          .select('symbol, icon_url');
+        
+        if (coins) {
+          const iconMap = new Map<string, string>();
+          coins.forEach((coin: any) => {
+            if (coin.icon_url) {
+              iconMap.set(coin.symbol, coin.icon_url);
+            }
+          });
+          setCoinIcons(iconMap);
+        }
+      } catch (error) {
+        console.error('Error fetching coin icons:', error);
+      }
+    };
+
+    fetchCoinIcons();
+  }, []);
 
   // 계좌 인증 상태 확인
   useEffect(() => {
@@ -101,6 +127,12 @@ export function Home({ wallets, transactions, onNavigate, onSelectCoin }: HomePr
 
   return (
     <div className="space-y-6">
+      {/* PC 제목 */}
+      <div className="hidden lg:block mb-6">
+        <h2 className="text-white text-2xl">홈</h2>
+        <p className="text-slate-400 text-sm">내 자산 현황</p>
+      </div>
+
       {/* 총 자산 카드 */}
       <div className="relative group">
         <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-2xl opacity-30 group-hover:opacity-40 blur transition-opacity"></div>
@@ -238,10 +270,29 @@ export function Home({ wallets, transactions, onNavigate, onSelectCoin }: HomePr
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div
-                      className="w-12 h-12 rounded-full bg-slate-700 border-2 border-cyan-500/50 flex items-center justify-center"
+                      className="w-12 h-12 rounded-full bg-slate-700 border-2 border-cyan-500/50 flex items-center justify-center overflow-hidden"
                       style={{ boxShadow: '0 0 10px rgba(6, 182, 212, 0.3)' }}
                     >
-                      <span className="text-cyan-400">{wallet.coin_type}</span>
+                      {coinIcons.has(wallet.coin_type) ? (
+                        <img 
+                          src={coinIcons.get(wallet.coin_type)} 
+                          alt={wallet.coin_type}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            const parent = target.parentElement;
+                            if (parent && !parent.querySelector('.fallback-text')) {
+                              const fallback = document.createElement('span');
+                              fallback.className = 'fallback-text text-cyan-400';
+                              fallback.textContent = wallet.coin_type;
+                              parent.appendChild(fallback);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <span className="text-cyan-400">{wallet.coin_type}</span>
+                      )}
                     </div>
                     <div className="text-left">
                       <p className="text-white">{wallet.coin_type}</p>

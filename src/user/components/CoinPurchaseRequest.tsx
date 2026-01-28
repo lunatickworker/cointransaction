@@ -132,12 +132,12 @@ export function CoinPurchaseRequest({
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={() => onNavigate('home')}
-          className="w-10 h-10 rounded-full bg-slate-800/50 border border-cyan-500/30 flex items-center justify-center hover:bg-cyan-500/10 transition-colors"
+          className="lg:hidden w-10 h-10 rounded-full bg-slate-800/50 border border-cyan-500/30 flex items-center justify-center hover:bg-cyan-500/10 transition-colors"
         >
           <ArrowLeft className="w-5 h-5 text-cyan-400" />
         </button>
         <div>
-          <h1 className="text-white">코인 구매 요청</h1>
+          <h1 className="text-white text-xl lg:text-2xl">코인 구매 요청</h1>
           <p className="text-slate-400 text-sm">관리자 승인 후 지갑에 입금됩니다</p>
         </div>
       </div>

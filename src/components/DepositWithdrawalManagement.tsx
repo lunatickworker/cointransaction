@@ -1,9 +1,10 @@
-import { ArrowDownCircle, ArrowUpCircle, CheckCircle, XCircle, Clock, Filter, Search, ChevronLeft, ChevronRight, Eye, DollarSign } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, CheckCircle, XCircle, Clock, Filter, Search, ChevronLeft, ChevronRight, Eye, DollarSign, ExternalLink, FileText, Coins as CoinsIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "../utils/supabase/client";
 import { useAuth } from "../contexts/AuthContext";
 import { SUPABASE_CONFIG } from "../utils/config";
 import { toast } from "sonner@2.0.3";
+import { getHierarchyUserIds } from "../utils/api/query-helpers";
 
 interface TransferRequest {
   request_id: string;
@@ -18,6 +19,7 @@ interface TransferRequest {
   created_at: string;
   updated_at: string;
   approved_at: string | null;
+  tx_hash?: string | null;
   username?: string;
   email?: string;
 }
@@ -59,10 +61,20 @@ interface Withdrawal {
   email?: string;
 }
 
+interface TransactionReceipt {
+  txHash: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  blockNumber?: number;
+  gasUsed?: string;
+  effectiveGasPrice?: string;
+  timestamp?: string;
+  confirmations?: number;
+}
+
 type TabType = "transfer_requests" | "deposits" | "withdrawals";
 
 export function DepositWithdrawalManagement() {
-  const { user } = useAuth(); // 컴포넌트 최상위에서 호출
+  const { user } = useAuth();
   const [transferRequests, setTransferRequests] = useState<TransferRequest[]>([]);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -75,85 +87,151 @@ export function DepositWithdrawalManagement() {
   const [selectedRequest, setSelectedRequest] = useState<TransferRequest | null>(null);
   const [adminNote, setAdminNote] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Transaction Receipt 모달
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [currentReceipt, setCurrentReceipt] = useState<TransactionReceipt | null>(null);
+  const [isLoadingReceipt, setIsLoadingReceipt] = useState(false);
+
+  // 코인 아이콘 매핑
+  const [coinIcons, setCoinIcons] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetchData();
+    if (user) {
+      fetchData();
+      fetchCoinIcons();
 
-    // 실시간 업데이트
-    const channel = supabase
-      .channel('deposit-withdrawal-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'transfer_requests' },
-        () => fetchData()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'deposits' },
-        () => fetchData()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'withdrawals' },
-        () => fetchData()
-      )
-      .subscribe();
+      // 실시간 업데이트
+      const channel = supabase
+        .channel('deposit-withdrawal-changes')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'transfer_requests' },
+          () => fetchData()
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'deposits' },
+          () => fetchData()
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'withdrawals' },
+          () => fetchData()
+        )
+        .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [user]);
 
   const fetchData = async () => {
-    // Transfer Requests
-    const { data: transferData } = await supabase
-      .from('transfer_requests')
-      .select(`
-        *,
-        users!transfer_requests_user_id_fkey(username, email)
-      `)
-      .order('created_at', { ascending: false });
+    if (!user || !user.role) return;
 
-    if (transferData) {
-      setTransferRequests(transferData.map((item: any) => ({
-        ...item,
-        username: item.users?.username,
-        email: item.users?.email
-      })));
+    console.log('📊 Fetching deposit/withdrawal data for user:', user.id, 'role:', user.role);
+
+    try {
+      // 계층 구조에 따라 하위 사용자 ID 조회
+      const allowedUserIds = await getHierarchyUserIds(user.id, user.role);
+
+      console.log('✅ Allowed user IDs:', allowedUserIds.length, allowedUserIds);
+
+      // Transfer Requests
+      let transferQuery = supabase
+        .from('transfer_requests')
+        .select(`
+          *,
+          users!transfer_requests_user_id_fkey(username, email)
+        `);
+
+      if (user.role !== 'master') {
+        transferQuery = transferQuery.in('user_id', allowedUserIds);
+      }
+
+      const { data: transferData } = await transferQuery.order('created_at', { ascending: false });
+
+      if (transferData) {
+        setTransferRequests(transferData.map((item: any) => ({
+          ...item,
+          username: item.users?.username,
+          email: item.users?.email
+        })));
+      }
+
+      // Deposits
+      let depositQuery = supabase
+        .from('deposits')
+        .select(`
+          *,
+          users!deposits_user_id_fkey(username, email)
+        `);
+
+      if (user.role !== 'master') {
+        depositQuery = depositQuery.in('user_id', allowedUserIds);
+      }
+
+      const { data: depositData } = await depositQuery.order('created_at', { ascending: false });
+
+      if (depositData) {
+        setDeposits(depositData.map((item: any) => ({
+          ...item,
+          username: item.users?.username,
+          email: item.users?.email
+        })));
+      }
+
+      // Withdrawals
+      let withdrawalQuery = supabase
+        .from('withdrawals')
+        .select(`
+          *,
+          users!withdrawals_user_id_fkey(username, email)
+        `);
+
+      if (user.role !== 'master') {
+        withdrawalQuery = withdrawalQuery.in('user_id', allowedUserIds);
+      }
+
+      const { data: withdrawalData } = await withdrawalQuery.order('created_at', { ascending: false });
+
+      if (withdrawalData) {
+        setWithdrawals(withdrawalData.map((item: any) => ({
+          ...item,
+          username: item.users?.username,
+          email: item.users?.email
+        })));
+      }
+
+      console.log('📊 Data loaded:', {
+        transfers: transferData?.length || 0,
+        deposits: depositData?.length || 0,
+        withdrawals: withdrawalData?.length || 0
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching data:', error);
+      toast.error('데이터를 가져오는데 실패했습니다');
     }
+  };
 
-    // Deposits
-    const { data: depositData } = await supabase
-      .from('deposits')
-      .select(`
-        *,
-        users!deposits_user_id_fkey(username, email)
-      `)
-      .order('created_at', { ascending: false });
+  const fetchCoinIcons = async () => {
+    try {
+      const { data: coinData } = await supabase
+        .from('supported_tokens')
+        .select('symbol, icon_url');
 
-    if (depositData) {
-      setDeposits(depositData.map((item: any) => ({
-        ...item,
-        username: item.users?.username,
-        email: item.users?.email
-      })));
-    }
-
-    // Withdrawals
-    const { data: withdrawalData } = await supabase
-      .from('withdrawals')
-      .select(`
-        *,
-        users!withdrawals_user_id_fkey(username, email)
-      `)
-      .order('created_at', { ascending: false });
-
-    if (withdrawalData) {
-      setWithdrawals(withdrawalData.map((item: any) => ({
-        ...item,
-        username: item.users?.username,
-        email: item.users?.email
-      })));
+      if (coinData) {
+        const icons: Record<string, string> = {};
+        coinData.forEach((coin: { symbol: string, icon_url: string }) => {
+          icons[coin.symbol] = coin.icon_url;
+        });
+        setCoinIcons(icons);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching coin icons:', error);
+      toast.error('코인 아이콘을 가져오는데 실패했습니다');
     }
   };
 
@@ -288,6 +366,162 @@ export function DepositWithdrawalManagement() {
 
       const txHash = transferResult.txHash;
       toast.success('블록체인 전송 완료! 잔액을 업데이트합니다...');
+      
+      // ===========================
+      // 자동 출금 프로세스 시작
+      // ===========================
+      toast.info('🔄 가맹점으로 자동 출금을 시작합니다...');
+      
+      try {
+        // 1. 사용자의 가맹점(store) 정보 조회
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('parent_user_id')
+          .eq('user_id', request.user_id)
+          .single();
+
+        if (userError || !userData || !userData.parent_user_id) {
+          console.warn('⚠️ 가맹점 정보를 찾을 수 없습니다. 자동 출금을 건너뜁니다.');
+          toast.warning('가맹점 정보가 없어 자동 출금을 건너뛰었습니다.');
+        } else {
+          const storeId = userData.parent_user_id;
+          console.log('🏪 가맹점 ID:', storeId);
+
+          // 2. 가맹점의 지갑 주소 조회
+          const { data: storeWalletData, error: storeWalletError } = await supabase
+            .from('wallets')
+            .select('address, wallet_id')
+            .eq('user_id', storeId)
+            .eq('coin_type', request.coin_type)
+            .single();
+
+          if (storeWalletError || !storeWalletData) {
+            console.warn(`⚠️ 가맹점의 ${request.coin_type} 지갑을 찾을 수 없습니다.`);
+            toast.warning(`가맹점의 ${request.coin_type} 지갑이 없어 자동 출금을 건너뛰었습니다.`);
+          } else {
+            console.log('📍 가맹점 지갑 주소:', storeWalletData.address);
+
+            // 3. 사용자 지갑에서 가맹점 지갑으로 실제 전송 (Biconomy)
+            const backendUrl = `${SUPABASE_CONFIG.backendUrl}/transaction/send`;
+            
+            const autoWithdrawResponse = await fetch(backendUrl, {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${SUPABASE_CONFIG.anonKey}`
+              },
+              body: JSON.stringify({
+                fromUserId: request.user_id,  // 사용자 ID로 지갑 조회
+                toAddress: storeWalletData.address,    // 가맹점 지갑
+                coinType: request.coin_type,
+                amount: request.amount.toString(),
+                gasPayment: {
+                  sponsor: true  // 관리자가 가스비 스폰서
+                }
+              })
+            });
+
+            const autoWithdrawResult = await autoWithdrawResponse.json();
+
+            if (!autoWithdrawResponse.ok || !autoWithdrawResult.success) {
+              console.error('❌ 자동 출금 실패:', autoWithdrawResult);
+              toast.error('자동 출금에 실패했습니다. 수동으로 출금해주세요.');
+            } else {
+              const withdrawTxHash = autoWithdrawResult.txHash;
+              console.log('✅ 자동 출금 성공:', withdrawTxHash);
+
+              // 4. 사용자 지갑 잔액 차감
+              const { error: balanceUpdateError } = await supabase
+                .from('wallets')
+                .update({ balance: 0 })  // 전액 출금
+                .eq('wallet_id', request.wallet_id);
+
+              if (balanceUpdateError) {
+                console.error('❌ 잔액 업데이트 실패:', balanceUpdateError);
+              }
+
+              // 5. withdrawals 테이블에 출금 기록 생성
+              const { error: withdrawError } = await supabase
+                .from('withdrawals')
+                .insert({
+                  user_id: request.user_id,
+                  wallet_id: request.wallet_id,
+                  coin_type: request.coin_type,
+                  amount: request.amount,
+                  tx_hash: withdrawTxHash,
+                  to_address: storeWalletData.address,
+                  status: 'completed',
+                  fee: 0,  // 가스비는 스폰서가 부담
+                  method: 'auto_withdraw',
+                  created_at: new Date().toISOString(),
+                  completed_at: new Date().toISOString()
+                });
+
+              if (withdrawError) {
+                console.error('❌ 출금 기록 저장 실패:', withdrawError);
+              }
+
+              // 6. transactions 테이블에 출금 기록 생성
+              const { error: withdrawTxError } = await supabase
+                .from('transactions')
+                .insert({
+                  user_id: request.user_id,
+                  wallet_id: request.wallet_id,
+                  type: 'withdrawal',
+                  coin_type: request.coin_type,
+                  amount: request.amount,
+                  balance_before: request.amount,  // 입금 후 출금 전 잔액
+                  balance_after: 0,  // 전액 출금
+                  reference_id: request.request_id,
+                  tx_hash: withdrawTxHash,
+                  description: '가맹점 자동 출금',
+                  metadata: {
+                    method: 'auto_withdraw',
+                    store_id: storeId,
+                    store_address: storeWalletData.address,
+                    gas_sponsored: true,
+                    deposit_tx_hash: txHash
+                  },
+                  created_at: new Date().toISOString()
+                });
+
+              if (withdrawTxError) {
+                console.error('❌ 출금 트랜잭션 기록 실패:', withdrawTxError);
+              }
+
+              // 7. 사용자에게 종알림 전송
+              const { error: notificationError } = await supabase
+                .from('notifications')
+                .insert({
+                  user_id: request.user_id,
+                  type: 'transaction',
+                  title: '입금 완료',
+                  message: `${request.amount} ${request.coin_type} 입금이 완료되어 가맹점으로 전송되었습니다.`,
+                  is_read: false,
+                  metadata: {
+                    tx_hash: withdrawTxHash,
+                    amount: request.amount,
+                    coin_type: request.coin_type,
+                    store_address: storeWalletData.address
+                  },
+                  created_at: new Date().toISOString()
+                });
+
+              if (notificationError) {
+                console.error('❌ 알림 전송 실패:', notificationError);
+              }
+
+              toast.success(`✅ 가맹점으로 자동 출금 완료! TX: ${withdrawTxHash.substring(0, 10)}...`);
+            }
+          }
+        }
+      } catch (autoWithdrawError: any) {
+        console.error('❌ 자동 출금 처리 중 오류:', autoWithdrawError);
+        toast.error(`자동 출금 중 오류: ${autoWithdrawError.message}`);
+      }
+      // ===========================
+      // 자동 출금 프로세스 종료
+      // ===========================
 
       // 5. 요청 상태를 승인으로 변경
       const { error: requestError } = await supabase
@@ -296,7 +530,8 @@ export function DepositWithdrawalManagement() {
           status: 'approved',
           admin_note: adminNote,
           approved_by: adminId,
-          approved_at: new Date().toISOString()
+          approved_at: new Date().toISOString(),
+          tx_hash: txHash
         })
         .eq('request_id', request.request_id);
 
@@ -404,6 +639,38 @@ export function DepositWithdrawalManagement() {
       toast.error(error.message || '거부 처리 중 오류가 발생했습니다');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // Transaction Receipt 조회
+  const handleViewReceipt = async (txHash: string, chainId: number = 8453) => {
+    setIsLoadingReceipt(true);
+    setShowReceiptModal(true);
+    setCurrentReceipt({ txHash, status: 'pending' });
+
+    try {
+      const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
+
+      const response = await fetch(`${backendUrl}/transaction/receipt/${txHash}?chainId=${chainId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${anonKey}`
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success && result.receipt) {
+        setCurrentReceipt(result.receipt);
+      } else {
+        toast.error('Receipt 조회 실패');
+      }
+    } catch (error: any) {
+      console.error('Receipt 조회 오류:', error);
+      toast.error('Receipt 조회 중 오류가 발생했습니다');
+    } finally {
+      setIsLoadingReceipt(false);
     }
   };
 
@@ -672,8 +939,20 @@ export function DepositWithdrawalManagement() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
-                            <span className="text-cyan-400 text-xs">{item.coin_type}</span>
+                          {coinIcons[item.coin_type] ? (
+                            <img 
+                              src={coinIcons[item.coin_type]} 
+                              alt={item.coin_type}
+                              className="w-8 h-8 rounded-full object-cover"
+                              onError={(e) => {
+                                // 이미지 로드 실패 시 아이콘으로 대체
+                                e.currentTarget.style.display = 'none';
+                                e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                              }}
+                            />
+                          ) : null}
+                          <div className={`w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center ${coinIcons[item.coin_type] ? 'hidden' : ''}`}>
+                            <CoinsIcon className="w-4 h-4 text-cyan-400" />
                           </div>
                           <span className="text-slate-200">{item.coin_type}</span>
                         </div>
@@ -708,12 +987,31 @@ export function DepositWithdrawalManagement() {
                               </button>
                             </>
                           )}
-                          {activeTab !== "transfer_requests" && (
+                          {activeTab === "transfer_requests" && item.status === "approved" && item.tx_hash && (
                             <button
-                              className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:border-cyan-500/50 hover:text-cyan-400 transition-all"
-                              title="상세보기"
+                              onClick={() => handleViewReceipt(item.tx_hash)}
+                              className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-400 hover:bg-purple-500/30 transition-all"
+                              title="Receipt 확인"
                             >
-                              <Eye className="w-4 h-4" />
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
+                          {(activeTab === "deposits" || activeTab === "withdrawals") && item.tx_hash && (
+                            <button
+                              onClick={() => handleViewReceipt(item.tx_hash)}
+                              className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-400 hover:bg-purple-500/30 transition-all"
+                              title="Receipt 확인"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
+                          {activeTab !== "transfer_requests" && !item.tx_hash && (
+                            <button
+                              className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 transition-all cursor-not-allowed"
+                              title="TX Hash 없음"
+                              disabled
+                            >
+                              <FileText className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -783,7 +1081,7 @@ export function DepositWithdrawalManagement() {
       {/* 승인/거부 모달 */}
       {selectedRequest && (
         <div
-          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
           onClick={() => {
             setSelectedRequest(null);
             setAdminNote('');
@@ -867,6 +1165,92 @@ export function DepositWithdrawalManagement() {
                   className="px-6 py-3 bg-slate-800 border border-slate-700 text-slate-400 rounded-lg hover:border-cyan-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Receipt 모달 */}
+      {showReceiptModal && currentReceipt && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+          onClick={() => {
+            setShowReceiptModal(false);
+            setCurrentReceipt(null);
+          }}
+        >
+          <div
+            className="relative w-full max-w-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-2xl opacity-30 blur"></div>
+            <div className="relative bg-slate-900 border border-cyan-500/30 rounded-2xl p-6">
+              <h3 className="text-white text-xl mb-6">트랜잭션 영수증</h3>
+
+              <div className="space-y-4 mb-6">
+                <div className="bg-slate-800/50 rounded-lg p-4 space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">트랜잭션 해시</span>
+                    <span className="text-white">
+                      <a href={`https://explorer.binance.org/tx/${currentReceipt.txHash}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
+                        {currentReceipt.txHash.substring(0, 10)}...
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">상태</span>
+                    <span className="text-white">
+                      {currentReceipt.status === 'pending' && <span className="bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">대기중</span>}
+                      {currentReceipt.status === 'processing' && <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">처리중</span>}
+                      {currentReceipt.status === 'completed' && <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">완료</span>}
+                      {currentReceipt.status === 'failed' && <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">실패</span>}
+                    </span>
+                  </div>
+                  {currentReceipt.blockNumber && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">블록 번호</span>
+                      <span className="text-white">{currentReceipt.blockNumber}</span>
+                    </div>
+                  )}
+                  {currentReceipt.gasUsed && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">사용된 가스</span>
+                      <span className="text-white">{currentReceipt.gasUsed}</span>
+                    </div>
+                  )}
+                  {currentReceipt.effectiveGasPrice && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">효과적인 가스 가격</span>
+                      <span className="text-white">{currentReceipt.effectiveGasPrice}</span>
+                    </div>
+                  )}
+                  {currentReceipt.timestamp && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">타임스탬프</span>
+                      <span className="text-white">{new Date(currentReceipt.timestamp).toLocaleString('ko-KR')}</span>
+                    </div>
+                  )}
+                  {currentReceipt.confirmations && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">확인 수</span>
+                      <span className="text-white">{currentReceipt.confirmations}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowReceiptModal(false);
+                    setCurrentReceipt(null);
+                  }}
+                  className="px-6 py-3 bg-slate-800 border border-slate-700 text-slate-400 rounded-lg hover:border-cyan-500/50 transition-all"
+                >
+                  닫기
                 </button>
               </div>
             </div>

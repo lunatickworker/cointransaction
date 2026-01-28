@@ -1,5 +1,5 @@
-import { ethers } from 'ethers';
 import { SUPERTRANSACTION_CONFIG, BICONOMY_CONFIG, debugLog, errorLog, SUPABASE_CONFIG } from '../config';
+import { isBiconomyEnabled } from '../biconomySettings';
 
 const API_URL = SUPERTRANSACTION_CONFIG.apiUrl;
 const API_KEY = SUPERTRANSACTION_CONFIG.apiKey;
@@ -31,31 +31,41 @@ export async function createSmartAccount(
   try {
     debugLog('Creating Smart Account for user:', request.userId);
 
+    // Biconomy 활성화 여부 확인
+    const enabled = await isBiconomyEnabled();
+    if (!enabled) {
+      throw new Error('Biconomy가 비활성화되어 있습니다. 관리자 설정을 확인해주세요.');
+    }
+
     const chainId = request.chainId || SUPERTRANSACTION_CONFIG.defaultChainId;
 
-    const provider = new ethers.providers.JsonRpcProvider(
-      BICONOMY_CONFIG.networks[BICONOMY_CONFIG.defaultNetwork].rpcUrl
-    );
-
-    const wallet = new ethers.Wallet(BICONOMY_CONFIG.privateKey, provider);
-    
-    const smartAccountAddress = ethers.utils.getContractAddress({
-      from: wallet.address,
-      nonce: await provider.getTransactionCount(wallet.address)
+    // Backend API 호출로 변경 (프론트엔드에서 ethers 사용 X)
+    const response = await fetch(`${BACKEND_URL}/api/biconomy/create-smart-account`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user_id: request.userId,
+        username: request.username,
+        chain_id: chainId,
+      }),
     });
 
-    debugLog('Smart Account created:', {
-      address: smartAccountAddress,
-      chainId,
-      owner: wallet.address
-    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Smart Account 생성 실패');
+    }
+
+    const result = await response.json();
+    debugLog('Smart Account created:', result);
 
     return {
-      address: smartAccountAddress,
-      chainId,
-      owner: wallet.address,
+      address: result.address,
+      chainId: result.chainId,
+      owner: result.owner,
       status: 'active',
-      createdAt: new Date().toISOString(),
+      createdAt: result.createdAt || new Date().toISOString(),
     };
 
   } catch (error: any) {
@@ -69,15 +79,22 @@ export async function getSmartAccountBalance(
   chainId?: number
 ): Promise<{ balance: string; balanceInEth: string }> {
   try {
-    const network = BICONOMY_CONFIG.networks[BICONOMY_CONFIG.defaultNetwork];
-    const provider = new ethers.providers.JsonRpcProvider(network.rpcUrl);
-    
-    const balance = await provider.getBalance(address);
-    const balanceInEth = ethers.utils.formatEther(balance);
+    // Backend API 호출로 변경
+    const response = await fetch(`${BACKEND_URL}/api/biconomy/balance/${address}?chainId=${chainId || SUPERTRANSACTION_CONFIG.defaultChainId}`, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
 
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || '잔액 조회 실패');
+    }
+
+    const result = await response.json();
     return {
-      balance: balance.toString(),
-      balanceInEth,
+      balance: result.balance,
+      balanceInEth: result.balanceInEth,
     };
   } catch (error: any) {
     errorLog('Balance fetch failed:', error);
@@ -115,6 +132,12 @@ export async function composeTransaction(payload: {
   gasPayment?: any;
 }) {
   try {
+    // Biconomy 활성화 여부 확인
+    const enabled = await isBiconomyEnabled();
+    if (!enabled) {
+      throw new Error('Biconomy가 비활성화되어 있습니다. 관리자 설정을 확인해주세요.');
+    }
+
     // Backend API 호출 (CORS 회피)
     const response = await fetch(`${BACKEND_URL}/api/biconomy/compose`, {
       method: 'POST',

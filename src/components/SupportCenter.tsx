@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { MessageCircle, Send, Search, X, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, Search, Trash2, User as UserIcon, X } from 'lucide-react';
 import { supabase } from '../utils/supabase/client';
-import { toast } from 'sonner@2.0.3';
 import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'sonner@2.0.3';
+import { getHierarchyUserIds } from '../utils/api/query-helpers';
 
 interface Message {
   message_id: string;
@@ -40,62 +41,73 @@ export function SupportCenter() {
   // 사용자별 채팅 목록 로드
   useEffect(() => {
     const loadUserChats = async () => {
-      // 1. 모든 메시지 가져오기
-      const { data: allMessages } = await supabase
-        .from('support_messages')
-        .select('*')
-        .order('created_at', { ascending: false });
+      if (!admin?.id || !admin?.role) return;
 
-      if (!allMessages) return;
+      try {
+        // 계층 구조에 따라 하위 사용자 ID 조회
+        const hierarchyUserIds = await getHierarchyUserIds(admin.id, admin.role);
 
-      // 2. 고유한 user_id 추출
-      const uniqueUserIds = [...new Set(allMessages.map(msg => msg.user_id))];
+        // 1. 하위 사용자들의 메시지만 가져오기
+        const { data: allMessages } = await supabase
+          .from('support_messages')
+          .select('*')
+          .in('user_id', hierarchyUserIds)
+          .order('created_at', { ascending: false });
 
-      // 3. users 테이블에서 사용자 정보 가져오기
-      const { data: usersData } = await supabase
-        .from('users')
-        .select('user_id, username, email')
-        .in('user_id', uniqueUserIds);
+        if (!allMessages) return;
 
-      // 4. user_id를 키로 하는 Map 생성
-      const usersMap = new Map(
-        usersData?.map(u => [u.user_id, u]) || []
-      );
+        // 2. 고유한 user_id 추출
+        const uniqueUserIds = [...new Set(allMessages.map(msg => msg.user_id))];
 
-      // 5. 사용자별로 그룹화
-      const chatMap = new Map<string, UserChat>();
+        // 3. users 테이블에서 사용자 정보 가져오기
+        const { data: usersData } = await supabase
+          .from('users')
+          .select('user_id, username, email')
+          .in('user_id', uniqueUserIds);
 
-      allMessages.forEach((msg: any) => {
-        const userId = msg.user_id;
-        const existing = chatMap.get(userId);
+        // 4. user_id를 키로 하는 Map 생성
+        const usersMap = new Map(
+          usersData?.map(u => [u.user_id, u]) || []
+        );
 
-        if (!existing || new Date(msg.created_at) > new Date(existing.lastMessageTime)) {
-          const unreadCount = allMessages.filter(
-            (m: any) => m.user_id === userId && m.sender_type === 'user' && !m.is_read
-          ).length;
+        // 5. 사용자별로 그룹화
+        const chatMap = new Map<string, UserChat>();
 
-          const userData = usersMap.get(userId);
-          // 이메일에서 @ 앞부분 추출 (예: hong@example.com → hong)
-          const displayName = userData?.email 
-            ? userData.email.split('@')[0] 
-            : userData?.username || 'Unknown';
+        allMessages.forEach((msg: any) => {
+          const userId = msg.user_id;
+          const existing = chatMap.get(userId);
 
-          chatMap.set(userId, {
-            user_id: userId,
-            username: displayName,
-            email: userData?.email || '',
-            lastMessage: msg.message,
-            lastMessageTime: msg.created_at,
-            unreadCount
-          });
-        }
-      });
+          if (!existing || new Date(msg.created_at) > new Date(existing.lastMessageTime)) {
+            const unreadCount = allMessages.filter(
+              (m: any) => m.user_id === userId && m.sender_type === 'user' && !m.is_read
+            ).length;
 
-      const chats = Array.from(chatMap.values()).sort(
-        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
-      );
+            const userData = usersMap.get(userId);
+            // 이메일에서 @ 앞부분 추출 (예: hong@example.com → hong)
+            const displayName = userData?.email 
+              ? userData.email.split('@')[0] 
+              : userData?.username || 'Unknown';
 
-      setUserChats(chats);
+            chatMap.set(userId, {
+              user_id: userId,
+              username: displayName,
+              email: userData?.email || '',
+              lastMessage: msg.message,
+              lastMessageTime: msg.created_at,
+              unreadCount
+            });
+          }
+        });
+
+        const chats = Array.from(chatMap.values()).sort(
+          (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+        );
+
+        setUserChats(chats);
+      } catch (error) {
+        console.error('Load user chats error:', error);
+        toast.error('사용자 채팅 목록 로드에 실패했습니다');
+      }
     };
 
     loadUserChats();
@@ -292,7 +304,7 @@ export function SupportCenter() {
         <div className="flex-1 overflow-y-auto">
           {filteredChats.length === 0 ? (
             <div className="text-center py-12">
-              <MessageCircle className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+              <MessageSquare className="w-12 h-12 text-slate-600 mx-auto mb-3" />
               <p className="text-slate-400">문의 내역이 없습니다</p>
             </div>
           ) : (
@@ -431,7 +443,7 @@ export function SupportCenter() {
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <MessageCircle className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+              <MessageSquare className="w-16 h-16 text-slate-600 mx-auto mb-4" />
               <p className="text-slate-400">사용자를 선택하여 대화를 시작하세요</p>
             </div>
           </div>

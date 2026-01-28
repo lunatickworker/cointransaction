@@ -6,13 +6,16 @@ interface User {
   id: string;
   email: string;
   username: string;
-  role: 'admin' | 'user';
+  role: 'master' | 'center' | 'agency' | 'store' | 'admin' | 'user';
   level?: string;
+  templateId?: string; // 템플릿 ID 추가
+  centerName?: string; // 센터 이름 추가
+  logoUrl?: string | null; // 로고 URL 추가
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<User>;
+  login: (email: string, password: string, isAdminPage: boolean) => Promise<User>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   isLoading: boolean;
@@ -25,72 +28,199 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // 로컬 스토리지에서 사용자 정보 복원
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (error) {
-        console.error('Error parsing saved user:', error);
+    // 1. Supabase Auth 세션 확인 (Google OAuth 등)
+    checkAuthSession();
+
+    // 2. Auth 상태 변경 리스너 등록
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔐 Auth state changed:', event, session?.user?.email);
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        await handleOAuthLogin(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
         localStorage.removeItem('user');
       }
-    }
-    setIsLoading(false);
-  }, []);
-
-  // 실시간 사용자 정보 업데이트 구독
-  useEffect(() => {
-    if (!user) return;
-
-    console.log('Setting up realtime subscription for user:', user.id);
-
-    // users 테이블의 변경사항 구독
-    const userSubscription = supabase
-      .channel(`user_changes_${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'users',
-          filter: `user_id=eq.${user.id}`
-        },
-        async (payload) => {
-          console.log('User data updated in realtime:', payload);
-          const newData = payload.new as any;
-          
-          // user 상태 업데이트
-          const updatedUser: User = {
-            id: newData.user_id,
-            email: newData.email,
-            username: newData.username,
-            role: newData.role || 'user',
-            level: newData.level
-          };
-          
-          setUser(updatedUser);
-          localStorage.setItem('user', JSON.stringify(updatedUser));
-          console.log('User state updated:', updatedUser);
-        }
-      )
-      .subscribe((status) => {
-        console.log('Subscription status:', status);
-      });
+    });
 
     return () => {
-      console.log('Unsubscribing from user changes');
-      userSubscription.unsubscribe();
+      authListener?.subscription.unsubscribe();
     };
-  }, [user?.id]);
+  }, []);
 
-  const login = async (email: string, password: string) => {
-    const currentPath = window.location.pathname;
-    const isAdminPage = currentPath.startsWith('/admin');
-    
+  const checkAuthSession = async () => {
     try {
-      // Backend API로 로그인 처리
-      const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
-      const response = await fetch(`${backendUrl}/api/auth/login`, {
+      setIsLoading(true);
+
+      // Supabase 세션 확인
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        console.log('✅ Active session found:', session.user.email);
+        await handleOAuthLogin(session.user);
+      } else {
+        // 로컬 스토리지에서 사용자 정보 복원 (일반 로그인)
+        const savedUser = localStorage.getItem('user');
+        if (savedUser) {
+          try {
+            setUser(JSON.parse(savedUser));
+          } catch (error) {
+            console.error('Error parsing saved user:', error);
+            localStorage.removeItem('user');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Session check error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleOAuthLogin = async (authUser: any) => {
+    try {
+      console.log('🔍 Checking if user exists in database:', authUser.email);
+
+      // users 테이블에서 사용자 조회
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('user_id, email, username, role, level, template_id, center_name, logo_url, status')
+        .eq('email', authUser.email)
+        .maybeSingle();
+
+      if (userError) {
+        console.error('Error fetching user:', userError);
+        throw new Error('사용자 정보 조회 실패');
+      }
+
+      if (!userData) {
+        // 신규 사용자 - users 테이블에 생성 (일반 사용자로)
+        console.log('📝 Creating new user in database');
+        
+        const newUser = {
+          user_id: authUser.id,
+          email: authUser.email,
+          username: authUser.user_metadata?.full_name || authUser.email.split('@')[0],
+          role: 'user',
+          status: 'active',
+          is_active: true,
+          referral_code: authUser.email.split('@')[0],
+          created_at: new Date().toISOString(),
+        };
+
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert(newUser);
+
+        if (insertError) {
+          console.error('Error creating user:', insertError);
+          throw new Error('사용자 생성 실패');
+        }
+
+        // 새로 생성된 사용자 정보로 로그인
+        const loggedInUser: User = {
+          id: authUser.id,
+          email: authUser.email,
+          username: newUser.username,
+          role: 'user',
+        };
+
+        setUser(loggedInUser);
+        localStorage.setItem('user', JSON.stringify(loggedInUser));
+        return;
+      }
+
+      // 기존 사용자 - 상태 확인
+      if (userData.status !== 'active') {
+        throw new Error('비활성화된 계정입니다. 관리자에게 문의하세요.');
+      }
+
+      const loggedInUser: User = {
+        id: userData.user_id,
+        email: userData.email,
+        username: userData.username,
+        role: userData.role || 'user',
+        level: userData.level,
+        templateId: userData.template_id,
+        centerName: userData.center_name,
+        logoUrl: userData.logo_url,
+      };
+
+      setUser(loggedInUser);
+      localStorage.setItem('user', JSON.stringify(loggedInUser));
+      console.log('✅ User logged in:', loggedInUser);
+    } catch (error) {
+      console.error('OAuth login error:', error);
+      throw error;
+    }
+  };
+
+  const login = async (email: string, password: string, isAdminPage: boolean = false): Promise<User> => {
+    try {
+      // Figma 환경에서는 직접 Supabase 클라이언트 사용
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+      const isFigmaEnv = hostname.includes('.figma.com') || hostname.includes('figma.site');
+      
+      if (isFigmaEnv) {
+        console.log('🎨 Figma 환경 감지 - Supabase 클라이언트 직접 사용');
+        
+        // 1. 사용자 조회 (password_hash만 조회)
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('user_id, email, username, role, level, template_id, center_name, logo_url, password_hash, status')
+          .eq('email', email)
+          .maybeSingle();
+        
+        if (userError || !userData) {
+          console.error('User lookup error:', userError);
+          throw new Error('이메일 또는 비밀번호가 올바르지 않습니다');
+        }
+        
+        console.log('User found:', { email: userData.email, role: userData.role, status: userData.status });
+        
+        // 승인대기 상태 체크
+        if (userData.status === 'pending') {
+          throw new Error('회원가입 승인 대기 중입니다. 관리자의 승인을 기다려주세요');
+        }
+        
+        // 2. 비밀번호 검증
+        // password_hash 컬럼의 값과 비교 (테스트 환경에서는 평문으로 저장됨)
+        if (!userData.password_hash) {
+          console.error('No password_hash found in database');
+          throw new Error('이메일 또는 비밀번호가 올바르지 않습니다');
+        }
+        
+        // 평문 비밀번호와 직접 비교 (테스트 환경)
+        if (userData.password_hash !== password) {
+          console.error('Password mismatch');
+          throw new Error('이메일 또는 비밀번호가 올바르지 않습니다');
+        }
+        
+        const loggedInUser: User = {
+          id: userData.user_id,
+          email: userData.email,
+          username: userData.username,
+          role: userData.role || 'user',
+          level: userData.level,
+          templateId: userData.template_id,
+          centerName: userData.center_name,
+          logoUrl: userData.logo_url
+        };
+        
+        // 역할 검증
+        if (isAdminPage && !['center', 'agency', 'store', 'admin', 'master'].includes(loggedInUser.role)) {
+          throw new Error('관리자 권한이 필요합니다');
+        }
+        
+        setUser(loggedInUser);
+        localStorage.setItem('user', JSON.stringify(loggedInUser));
+        
+        console.log('✅ Figma 환경 로그인 성공:', loggedInUser);
+        return loggedInUser;
+      }
+      
+      // 프로덕션 환경: Backend API로 로그인 처리
+      const response = await fetch(`${SUPABASE_CONFIG.backendUrl}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +250,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: userData.email,
         username: userData.username,
         role: userData.role || 'user',
-        level: userData.level
+        level: userData.level,
+        templateId: userData.template_id,
+        centerName: userData.center_name,
+        logoUrl: userData.logo_url
       };
       
       // 역할 검증: 관리자 페이지에서는 관리자만 로그인 가능
@@ -128,10 +261,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('관리자 권한이 필요합니다');
       }
       
+      console.log('Setting user state:', loggedInUser);
       setUser(loggedInUser);
       localStorage.setItem('user', JSON.stringify(loggedInUser));
       
-      console.log('Login successful:', loggedInUser);
+      // ✅ 로그인 직후 DB에서 최신 정보 다시 가져오기 (template_id 등 누락 방지)
+      if (loggedInUser.role === 'center' || loggedInUser.role === 'agency') {
+        console.log('🔄 Refreshing user data to get template_id...');
+        setTimeout(async () => {
+          try {
+            const { data: freshData, error } = await supabase
+              .from('users')
+              .select('user_id, email, username, role, level, template_id, center_name, logo_url')
+              .eq('user_id', loggedInUser.id)
+              .single();
+
+            if (!error && freshData) {
+              const freshUser: User = {
+                id: freshData.user_id,
+                email: freshData.email,
+                username: freshData.username,
+                role: freshData.role || 'user',
+                level: freshData.level,
+                templateId: freshData.template_id,
+                centerName: freshData.center_name,
+                logoUrl: freshData.logo_url
+              };
+
+              console.log('✅ Fresh user data loaded:', freshUser);
+              setUser(freshUser);
+              localStorage.setItem('user', JSON.stringify(freshUser));
+            }
+          } catch (err) {
+            console.error('Failed to refresh user data:', err);
+          }
+        }, 100); // 100ms 후 실행
+      }
+      
+      console.log('Login successful, user state updated:', loggedInUser);
       return loggedInUser;
     } catch (error: any) {
       console.error('Login error:', error);
@@ -140,6 +307,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    supabase.auth.signOut(); // Supabase Auth 로그아웃
     setUser(null);
     localStorage.removeItem('user');
   };
@@ -151,7 +319,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // DB에서 최신 사용자 정보 가져오기
       const { data, error } = await supabase
         .from('users')
-        .select('user_id, email, username, role, level')
+        .select('user_id, email, username, role, level, template_id, center_name, logo_url')
         .eq('user_id', user.id)
         .single();
 
@@ -163,7 +331,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: data.email,
           username: data.username,
           role: data.role || 'user',
-          level: data.level
+          level: data.level,
+          templateId: data.template_id,
+          centerName: data.center_name,
+          logoUrl: data.logo_url
         };
 
         setUser(updatedUser);

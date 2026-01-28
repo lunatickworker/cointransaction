@@ -18,9 +18,22 @@ export function Login({ onLoginSuccess }: LoginProps) {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      const user = await login(email, password);
       toast.success('로그인 성공');
+      
+      // onLoginSuccess 먼저 호출하여 상태 업데이트
       onLoginSuccess?.();
+      
+      // 약간의 딜레이 후 라우팅 (상태 업데이트 완료 대기)
+      setTimeout(() => {
+        if (user.role === 'master') {
+          window.location.hash = '#master';
+        } else if (['center', 'agency', 'store', 'admin'].includes(user.role)) {
+          window.location.hash = '#admin';
+        } else {
+          window.location.hash = '';
+        }
+      }, 50);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '로그인 실패');
     } finally {

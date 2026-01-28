@@ -222,12 +222,18 @@ export function Settings({ onNavigate }: SettingsProps) {
     <div className="space-y-6 pb-20">
       <button 
         onClick={() => onNavigate('home')} 
-        className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
+        className="lg:hidden flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
         style={{ filter: 'drop-shadow(0 0 3px rgba(6, 182, 212, 0.5))' }}
       >
         <ChevronRight className="w-4 h-4 rotate-180" />
         <span>뒤로</span>
       </button>
+
+      {/* PC 제목 */}
+      <div className="hidden lg:block">
+        <h2 className="text-white text-2xl">설정</h2>
+        <p className="text-slate-400 text-sm">계정 정보 및 설정</p>
+      </div>
 
       {/* 프로필 섹션 */}
       <div className="text-center py-6">
@@ -238,7 +244,17 @@ export function Settings({ onNavigate }: SettingsProps) {
           <User className="w-10 h-10 text-cyan-400" style={{ filter: 'drop-shadow(0 0 5px rgba(6, 182, 212, 1))' }} />
         </div>
         <div className="text-white text-xl mb-1">{user?.username}</div>
-        <div className="text-slate-400 text-sm">{user?.email}</div>
+        <div className="flex items-center justify-center gap-2">
+          <div className="text-slate-400 text-sm">{user?.email}</div>
+          <div className="group relative">
+            <Lock className="w-3.5 h-3.5 text-slate-500" />
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              이메일은 변경할 수 없습니다
+              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-800"></div>
+            </div>
+          </div>
+        </div>
+        <p className="text-slate-500 text-xs mt-1">※ 이메일은 계정 식별자로 사용되어 변경이 불가능합니다</p>
         
         {/* 계좌인증 상태 배지 */}
         <div className="flex items-center justify-center gap-2 mt-3">
@@ -399,7 +415,7 @@ export function Settings({ onNavigate }: SettingsProps) {
 
       {/* 비밀번호 변경 모달 */}
       {showPasswordChange && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-6">
           <div className="bg-slate-900 border border-orange-500/30 rounded-2xl p-6 w-full max-w-sm">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg text-white">비밀번호 변경</h2>

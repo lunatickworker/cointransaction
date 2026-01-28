@@ -25,6 +25,32 @@ export function Transactions({ transactions, onNavigate }: TransactionsProps) {
   const [transferRequests, setTransferRequests] = useState<TransferRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'all' | 'requests'>('all');
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
+
+  // 코인 아이콘 로드
+  useEffect(() => {
+    const fetchCoinIcons = async () => {
+      try {
+        const { data: coins } = await supabase
+          .from('supported_tokens')
+          .select('symbol, icon_url');
+        
+        if (coins) {
+          const iconMap = new Map<string, string>();
+          coins.forEach((coin: any) => {
+            if (coin.icon_url) {
+              iconMap.set(coin.symbol, coin.icon_url);
+            }
+          });
+          setCoinIcons(iconMap);
+        }
+      } catch (error) {
+        console.error('Error fetching coin icons:', error);
+      }
+    };
+
+    fetchCoinIcons();
+  }, []);
 
   useEffect(() => {
     fetchTransferRequests();
@@ -73,13 +99,16 @@ export function Transactions({ transactions, onNavigate }: TransactionsProps) {
     <div className="space-y-6">
       <button 
         onClick={() => onNavigate('home')} 
-        className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
+        className="lg:hidden flex items-center gap-2 text-cyan-400 hover:text-cyan-300"
       >
         <ChevronRight className="w-4 h-4 rotate-180" />
         <span>뒤로</span>
       </button>
 
-      <h2 className="text-2xl text-white">거래 내역</h2>
+      <div>
+        <h2 className="text-2xl text-white">거래 내역</h2>
+        <p className="hidden lg:block text-slate-400 text-sm mt-1">입출금 및 전송 요청 내역</p>
+      </div>
 
       {/* 탭 */}
       <div className="flex gap-2 border-b border-slate-700/50">

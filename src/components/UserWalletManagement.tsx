@@ -1,9 +1,10 @@
-import { Search, UserCheck, UserX, Lock, Wallet, Plus, Loader2, Copy, Check, Shield, Activity, TrendingUp, Coins, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, UserCheck, UserX, Lock, Wallet, Plus, Loader2, Copy, Check, Shield, Activity, TrendingUp, Coins, ChevronLeft, ChevronRight, Trash2, UserPlus } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "../utils/supabase/client";
 import { toast } from "sonner@2.0.3";
-import { NeonCard } from "./NeonCard";
 import { useAuth } from "../contexts/AuthContext";
+import { checkEmailAvailability } from "../utils/api/check-email";
+import bcrypt from 'bcryptjs';
 
 interface UserData {
   user_id: string;
@@ -24,6 +25,11 @@ interface WalletData {
   balance: number;
   wallet_type?: string;
   created_at: string;
+}
+
+interface CoinData {
+  symbol: string;
+  icon_url: string | null;
 }
 
 interface Stats {
@@ -53,6 +59,7 @@ export function UserWalletManagement() {
   const [availableCoins, setAvailableCoins] = useState<string[]>([]);
   const [selectedCoins, setSelectedCoins] = useState<string[]>([]);
   const [isAddingCoins, setIsAddingCoins] = useState(false);
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
   
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(1);
@@ -68,8 +75,38 @@ export function UserWalletManagement() {
   const [showPasswordReset, setShowPasswordReset] = useState(false);
   const [generatedPassword, setGeneratedPassword] = useState('');
 
+  // 센터 계정 전용: 회원 추가/삭제
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [stores, setStores] = useState<{ user_id: string; username: string; }[]>([]);
+  const [createUserForm, setCreateUserForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    phoneNumber: '',
+    storeId: '' // 소속 가맹점
+  });
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [emailValidation, setEmailValidation] = useState<{
+    isValid: boolean;
+    isAvailable: boolean | null;
+    isChecking: boolean;
+    message: string;
+  }>({
+    isValid: false,
+    isAvailable: null,
+    isChecking: false,
+    message: ''
+  });
+
   useEffect(() => {
+    // 병렬로 데이터 로드
     fetchData();
+    fetchCoinIcons(); // 백그라운드에서 비동기 로드
+    
+    // 센터 계정인 경우 가맹점 목록 조회
+    if (user?.role === 'center') {
+      fetchStores();
+    }
     
     // 실시간 업데이트
     const channel = supabase
@@ -88,6 +125,35 @@ export function UserWalletManagement() {
     };
   }, []);
 
+  // 사용자 목록이 로드되면 첫 번째 사용자 자동 선택
+  useEffect(() => {
+    if (users.length > 0 && !selectedUser && !isLoading) {
+      const firstUser = users[0];
+      setSelectedUser(firstUser);
+      fetchUserWallets(firstUser.user_id);
+    }
+  }, [users, selectedUser, isLoading]);
+
+  const fetchCoinIcons = async () => {
+    try {
+      const { data: coins } = await supabase
+        .from('supported_tokens')
+        .select('symbol, icon_url');
+      
+      if (coins) {
+        const iconMap = new Map<string, string>();
+        coins.forEach((coin: CoinData) => {
+          if (coin.icon_url) {
+            iconMap.set(coin.symbol, coin.icon_url);
+          }
+        });
+        setCoinIcons(iconMap);
+      }
+    } catch (error) {
+      console.error('Error fetching coin icons:', error);
+    }
+  };
+
   const fetchData = async () => {
     setIsLoading(true);
     
@@ -96,50 +162,95 @@ export function UserWalletManagement() {
       const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
       const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
       
-      console.log('🔍 Fetching users from Backend API:', `${backendUrl}/api/admin/users`);
-      
       const response = await fetch(`${backendUrl}/api/admin/users`, {
         headers: {
           'Authorization': `Bearer ${anonKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-User-Email': user?.email || '',
+          'X-User-Role': user?.role || '',
+          'X-User-Id': user?.id || ''
         }
       });
-      console.log('📡 Response status:', response.status);
       
+      // 응답 상태 확인
+      if (!response.ok) {
+        console.error('❌ HTTP Error:', response.status, response.statusText);
+        const text = await response.text();
+        console.error('Response body:', text);
+        toast.error(`서버 오류: ${response.status}`);
+        setIsLoading(false);
+        return;
+      }
+
+      // Content-Type 확인
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error('❌ Invalid content-type:', contentType);
+        const text = await response.text();
+        console.error('Response body:', text);
+        toast.error('서버 응답 형식이 올바르지 않습니다');
+        setIsLoading(false);
+        return;
+      }
+
       const result = await response.json();
-      console.log('📦 Response data:', result);
 
       if (result.success && result.users) {
-        console.log('✅ Users loaded:', result.users.length);
+        // 사용자 목록을 먼저 표시 (즉시 로딩 완료)
         setUsers(result.users);
+        setIsLoading(false);
         
-        // 통계 계산
-        const totalUsers = result.users.length;
-        const verifiedUsers = result.users.filter((u: any) => u.account_verification_status === 'verified').length;
-        
-        // 지갑 데이터도 Backend API로 가져오기
-        const { data: walletsData } = await supabase
-          .from('wallets')
-          .select('balance, coin_type');
-        
-        const totalWallets = walletsData?.length || 0;
-        const totalValue = walletsData?.reduce((sum, w) => sum + (w.balance || 0), 0) || 0;
-
-        setStats({
-          totalUsers,
-          verifiedUsers,
-          totalWallets,
-          totalValue
-        });
+        // 통계는 백그라운드에서 계산 (비동기)
+        fetchStats(result.users);
       } else {
         console.error('❌ Backend API error:', result);
         toast.error(result.error || '사용자 데이터를 가져오는데 실패했습니다');
+        setIsLoading(false);
       }
     } catch (error) {
       console.error('❌ Error fetching users:', error);
       toast.error('사용자 데이터를 가져오는데 실패했습니다');
-    } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchStats = async (usersData: UserData[]) => {
+    try {
+      // 통계 계산
+      const totalUsers = usersData.length;
+      const verifiedUsers = usersData.filter((u: any) => u.account_verification_status === 'verified').length;
+      
+      // 사용자들의 user_id 배열
+      const userIds = usersData.map((u: any) => u.user_id);
+      
+      if (userIds.length === 0) {
+        setStats({
+          totalUsers: 0,
+          verifiedUsers: 0,
+          totalWallets: 0,
+          totalValue: 0
+        });
+        return;
+      }
+      
+      // 지갑 데이터 가져오기 (배치 최적화)
+      const { data: walletsData } = await supabase
+        .from('wallets')
+        .select('balance, user_id')
+        .in('user_id', userIds);
+      
+      const totalWallets = walletsData?.length || 0;
+      const totalValue = walletsData?.reduce((sum, w) => sum + (w.balance || 0), 0) || 0;
+
+      setStats({
+        totalUsers,
+        verifiedUsers,
+        totalWallets,
+        totalValue
+      });
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+      // 통계 에러는 조용히 처리 (사용자 목록은 이미 표시됨)
     }
   };
 
@@ -152,6 +263,242 @@ export function UserWalletManagement() {
 
     if (data) {
       setUserWallets(data);
+    }
+  };
+
+  // 센터 계정 전용: 가맹점 목록 조회
+  const fetchStores = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('user_id, username')
+        .eq('role', 'store')
+        .eq('parent_user_id', user?.id)
+        .eq('status', 'active')
+        .order('username', { ascending: true });
+
+      if (error) throw error;
+      setStores(data || []);
+    } catch (error) {
+      console.error('가맹점 목록 조회 실패:', error);
+    }
+  };
+
+  // 이메일 실시간 검증 (디바운싱 포함)
+  const validateEmail = async (email: string) => {
+    // 빈 값 체크
+    if (!email.trim()) {
+      setEmailValidation({
+        isValid: false,
+        isAvailable: null,
+        isChecking: false,
+        message: ''
+      });
+      return;
+    }
+
+    // 이메일 형식 검증
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setEmailValidation({
+        isValid: false,
+        isAvailable: null,
+        isChecking: false,
+        message: '올바른 이메일 형식이 아닙니다'
+      });
+      return;
+    }
+
+    // 중복 체크 시작 (형식이 올바른 경우)
+    setEmailValidation({
+      isValid: true,
+      isAvailable: null,
+      isChecking: true,
+      message: '이메일 확인 중...'
+    });
+
+    try {
+      const { isAvailable } = await checkEmailAvailability(email);
+      
+      setEmailValidation({
+        isValid: true,
+        isAvailable: isAvailable,
+        isChecking: false,
+        message: isAvailable 
+          ? '✓ 사용 가능한 이메일입니다' 
+          : '✗ 이미 사용 중인 이메일입니다'
+      });
+    } catch (error) {
+      setEmailValidation({
+        isValid: true,
+        isAvailable: null,
+        isChecking: false,
+        message: '이메일 확인 중 오류가 발생했습니다'
+      });
+    }
+  };
+
+  // 디바운싱된 이메일 검증
+  useEffect(() => {
+    if (!createUserForm.email) return;
+
+    const timer = setTimeout(() => {
+      validateEmail(createUserForm.email);
+    }, 500); // 0.5초 대기
+
+    return () => clearTimeout(timer);
+  }, [createUserForm.email]);
+
+  // 회원 추가
+  const handleCreateUser = async () => {
+    try {
+      setIsCreatingUser(true);
+      
+      // 검증
+      if (!createUserForm.username.trim()) {
+        toast.error('사용자명을 입력해주세요');
+        return;
+      }
+      if (!createUserForm.email.trim()) {
+        toast.error('이메일을 입력해주세요');
+        return;
+      }
+      
+      // 이메일 형식 검증
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(createUserForm.email)) {
+        toast.error('올바른 이메일 형식이 아닙니다');
+        return;
+      }
+      
+      if (!createUserForm.password || createUserForm.password.length < 8) {
+        toast.error('비밀번호는 최소 8자 이상이어야 합니다');
+        return;
+      }
+      if (!createUserForm.storeId) {
+        toast.error('소속 가맹점을 선택해주세요');
+        return;
+      }
+
+      // 이메일 중복 확인
+      if (!emailValidation.isAvailable) {
+        toast.error('사용할 수 없는 이메일입니다');
+        return;
+      }
+
+      // 회원 생성
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: createUserForm.email,
+        password: createUserForm.password,
+        options: {
+          emailRedirectTo: undefined, // 이메일 확인 비활성화
+          data: {
+            username: createUserForm.username,
+            role: 'user',
+            parent_user_id: createUserForm.storeId,
+            phone_number: createUserForm.phoneNumber || null
+          }
+        }
+      });
+
+      if (authError) {
+        console.error('❌ Auth Error:', authError);
+        throw authError;
+      }
+
+      if (!authData.user) {
+        throw new Error('사용자 생성에 실패했습니다');
+      }
+
+      // 비밀번호 해시 생성
+      const passwordHash = await bcrypt.hash(createUserForm.password, 10);
+
+      // users 테이블에 사용자 정보 저장
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          user_id: authData.user.id,
+          email: createUserForm.email,
+          username: createUserForm.username,
+          password_hash: passwordHash, // 해시된 비밀번호 저장
+          phone: createUserForm.phoneNumber || null,
+          role: 'user',
+          level: 'Basic',
+          parent_user_id: createUserForm.storeId,
+          tenant_id: createUserForm.storeId, // 소속 가맹점을 tenant_id로 사용
+          is_active: true,
+          kyc_status: 'pending',
+        });
+
+      if (insertError) {
+        console.error('❌ DB Insert Error:', insertError);
+        throw new Error('데이터베이스 저장 중 오류가 발생했습니다');
+      }
+
+      toast.success('회원이 추가되었습니다');
+      setShowCreateUserModal(false);
+      setCreateUserForm({
+        username: '',
+        email: '',
+        password: '',
+        phoneNumber: '',
+        storeId: ''
+      });
+      setEmailValidation({
+        isValid: false,
+        isAvailable: null,
+        isChecking: false,
+        message: ''
+      });
+      fetchData();
+    } catch (error: any) {
+      console.error('회원 추가 실패:', error);
+      toast.error(error.message || '회원 추가에 실패했습니다');
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  // 회원 삭제
+  const handleDeleteUser = async () => {
+    if (!selectedUser) return;
+    
+    if (!confirm(`${selectedUser.username} (${selectedUser.email}) 회원을 정말 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`)) {
+      return;
+    }
+
+    try {
+      // 1. 사용자 지갑 모두 삭제
+      const { error: walletError } = await supabase
+        .from('wallets')
+        .delete()
+        .eq('user_id', selectedUser.user_id);
+
+      if (walletError) {
+        console.error('지갑 삭제 오류:', walletError);
+      }
+
+      // 2. 사용자 삭제
+      const { error: userError } = await supabase
+        .from('users')
+        .delete()
+        .eq('user_id', selectedUser.user_id);
+
+      if (userError) throw userError;
+
+      // 3. Auth 사용자 삭제 (선택적)
+      try {
+        await supabase.auth.admin.deleteUser(selectedUser.user_id);
+      } catch (authError) {
+        console.error('Auth 삭제 오류:', authError);
+      }
+
+      toast.success('회원이 삭제되었습니다');
+      setSelectedUser(null);
+      fetchData();
+    } catch (error: any) {
+      console.error('회원 삭제 실패:', error);
+      toast.error(error.message || '회원 삭제에 실패했습니다');
     }
   };
 
@@ -205,12 +552,12 @@ export function UserWalletManagement() {
     if (!selectedUser) return;
 
     try {
-      // 사용자 기본 정보 업데이트
+      // 사용자 기본 정보 업데이트 (이메일 제외)
       const { error: updateError } = await supabase
         .from('users')
         .update({
-          username: editForm.username,
-          email: editForm.email
+          username: editForm.username
+          // email은 변경하지 않음 (referral_code와 연동)
         })
         .eq('user_id', selectedUser.user_id);
 
@@ -218,11 +565,10 @@ export function UserWalletManagement() {
 
       toast.success('사용자 정보가 업데이트되었습니다');
       
-      // 선택된 사용자 업데이트
+      // 선택된 사용자 업데이트 (이메일은 기존 값 유지)
       setSelectedUser({
         ...selectedUser,
-        username: editForm.username,
-        email: editForm.email
+        username: editForm.username
       });
       
       await fetchData();
@@ -280,20 +626,23 @@ export function UserWalletManagement() {
 
   const handleCopyPassword = async () => {
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(generatedPassword);
+      // Fallback 방식을 기본으로 사용 (권한 문제 회피)
+      const textArea = document.createElement('textarea');
+      textArea.value = generatedPassword;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      if (successful) {
         toast.success('비밀번호가 클립보드에 복사되었습니다');
       } else {
-        // Fallback: 텍스트 선택 및 수동 복사
-        const textArea = document.createElement('textarea');
-        textArea.value = generatedPassword;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        toast.success('비밀번호가 클립보드에 복사되었습니다');
+        throw new Error('Copy command failed');
       }
     } catch (error) {
       console.error('Copy failed:', error);
@@ -325,26 +674,46 @@ export function UserWalletManagement() {
     setIsAddingCoins(true);
 
     try {
-      for (const coinType of selectedCoins) {
-        const address = '0x' + Array.from({ length: 40 }, () => 
-          Math.floor(Math.random() * 16).toString(16)
-        ).join('');
+      // ✅ Edge Function을 통한 실제 블록체인 지갑 생성
+      const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16b2VlcW10dmxueW9uaWN5Y3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MjIyNzcsImV4cCI6MjA3ODQ5ODI3N30.oo7FsWjthtBtM-Xa1VFJieMGQ4mG__V8w7r9qGBPzaI';
 
-        await supabase.from('wallets').insert({
+      const response = await fetch(`${backendUrl}/wallet/create-batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${anonKey}`
+        },
+        body: JSON.stringify({
           user_id: selectedUser.user_id,
-          coin_type: coinType,
-          address: address,
-          balance: 0,
+          coin_types: selectedCoins,
           wallet_type: 'hot'
+        })
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || '지갑 생성 실패');
+      }
+
+      const { wallets, errors, summary } = result;
+
+      if (summary.succeeded > 0) {
+        toast.success(`${summary.succeeded}개의 코인 지갑이 생성되었습니다`);
+      }
+      
+      if (errors && errors.length > 0) {
+        errors.forEach((err: any) => {
+          toast.error(`${err.coin_type} 지갑 생성 실패: ${err.error}`);
         });
       }
 
-      toast.success(`${selectedCoins.length}개의 코인 지갑이 추가되었습니다`);
       setShowAddCoinModal(false);
       await fetchUserWallets(selectedUser.user_id);
-    } catch (error) {
-      toast.error('코인 추가 실패');
-      console.error(error);
+    } catch (error: any) {
+      toast.error(`지갑 생성 실패: ${error.message}`);
+      console.error('지갑 생성 오류:', error);
     } finally {
       setIsAddingCoins(false);
     }
@@ -352,24 +721,25 @@ export function UserWalletManagement() {
 
   const copyToClipboard = async (address: string, walletId: string) => {
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(address);
+      // Fallback 방식을 기본으로 사용 (권한 문제 회피)
+      const textArea = document.createElement('textarea');
+      textArea.value = address;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      if (successful) {
         setCopiedAddress(walletId);
         toast.success('주소가 복사되었습니다');
         setTimeout(() => setCopiedAddress(null), 2000);
       } else {
-        // Fallback: 텍스트 선택 및 수동 복사
-        const textArea = document.createElement('textarea');
-        textArea.value = address;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        setCopiedAddress(walletId);
-        toast.success('주소가 복사되었습니다');
-        setTimeout(() => setCopiedAddress(null), 2000);
+        throw new Error('Copy command failed');
       }
     } catch (error) {
       console.error('Copy failed:', error);
@@ -476,10 +846,19 @@ export function UserWalletManagement() {
         <div className="lg:col-span-2">
           <div className="relative">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-xl opacity-20 blur"></div>
-            <div className="relative bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-6 h-[calc(100vh-300px)]">
+            <div className="relative bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-6 min-h-[600px]">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl text-cyan-400">사용자 목록</h2>
                 <div className="flex items-center gap-2">
+                  {user?.role === 'center' && (
+                    <button
+                      onClick={() => setShowCreateUserModal(true)}
+                      className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-lg text-sm flex items-center gap-1.5 transition-all shadow-lg shadow-cyan-500/30"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      회원 추가
+                    </button>
+                  )}
                   <select
                     value={itemsPerPage}
                     onChange={(e) => setItemsPerPage(Number(e.target.value))}
@@ -514,8 +893,8 @@ export function UserWalletManagement() {
                 />
               </div>
 
-              {/* 사용자 리스트 - 총촘하게 */}
-              <div className="space-y-1.5 overflow-y-auto h-[calc(100%-180px)]">
+              {/* 사용자 리스트 - 스크롤 없이 페이지네이션 */}
+              <div className="space-y-1.5 min-h-[480px]">
                 {isLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
@@ -587,15 +966,18 @@ export function UserWalletManagement() {
 
         {/* 오른쪽: 사용자 상세 정보 */}
         <div className="lg:col-span-3">
-          {!selectedUser ? (
-            <NeonCard className="p-12 h-[calc(100vh-300px)] flex items-center justify-center">
-              <div className="text-center text-slate-400">
-                <UserCheck className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <p>사용자를 선택해주세요</p>
-              </div>
-            </NeonCard>
-          ) : (
-            <NeonCard className="p-6 h-[calc(100vh-300px)]">
+          <div className="relative">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-xl opacity-20 blur"></div>
+            <div className="relative bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl min-h-[600px]">
+              {!selectedUser ? (
+                <div className="p-12 h-full flex items-center justify-center">
+                  <div className="text-center text-slate-400">
+                    <UserCheck className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p>사용자를 선택해주세요</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 h-full flex flex-col">
               {/* 탭 헤더 */}
               <div className="flex items-center justify-between mb-6">
                 <div className="flex gap-2">
@@ -632,8 +1014,8 @@ export function UserWalletManagement() {
                 )}
               </div>
 
-              {/* 탭 컨텐츠 */}
-              <div className="overflow-y-auto h-[calc(100%-80px)]">
+              {/* 탭 컨텐츠 - 스크롤 없이 */}
+              <div className="flex-1 min-h-0">
                 {activeTab === "info" ? (
                   <div className="space-y-6">
                     {/* 기본 정보 */}
@@ -684,18 +1066,27 @@ export function UserWalletManagement() {
                         <div>
                           <p className="text-slate-400 text-sm mb-1">이메일</p>
                           {isEditMode ? (
-                            <input
-                              type="email"
-                              value={editForm.email}
-                              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-300 focus:outline-none focus:border-cyan-500"
-                            />
+                            <div className="relative">
+                              <input
+                                type="email"
+                                value={editForm.email}
+                                readOnly
+                                disabled
+                                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-slate-500 cursor-not-allowed"
+                              />
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 group">
+                                <Lock className="w-4 h-4 text-slate-600" />
+                                <div className="absolute bottom-full right-0 mb-2 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                  이메일은 변경할 수 없습니다
+                                </div>
+                              </div>
+                            </div>
                           ) : (
                             <p className="text-slate-300">{selectedUser.email}</p>
                           )}
                         </div>
                         <div>
-                          <p className="text-slate-400 text-sm mb-1">계좌인증 상태</p>
+                          <p className="text-slate-400 text-sm mb-1">계좌증 상태</p>
                           <span className={`inline-block px-3 py-1 rounded text-sm ${getVerificationColor(selectedUser.account_verification_status)}`}>
                             {getVerificationText(selectedUser.account_verification_status)}
                           </span>
@@ -821,6 +1212,26 @@ export function UserWalletManagement() {
                       </div>
                     </div>
 
+                    {/* 회원 삭제 (센터 계정만) */}
+                    {user?.role === 'center' && (
+                      <div className="bg-red-900/20 rounded-lg p-6 border border-red-500/30">
+                        <h3 className="text-lg text-red-400 mb-4 flex items-center gap-2">
+                          <Trash2 className="w-5 h-5" />
+                          회원 삭제
+                        </h3>
+                        <p className="text-slate-400 text-sm mb-4">
+                          회원을 삭제하면 모든 데이터(지갑, 거래내역 등)가 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+                        </p>
+                        <button
+                          onClick={handleDeleteUser}
+                          className="flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-all border border-red-500/50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          회원 삭제
+                        </button>
+                      </div>
+                    )}
+
                     {/* 지갑 요약 */}
                     <div className="bg-slate-800/70 rounded-lg p-6 border border-slate-700">
                       <h3 className="text-lg text-cyan-400 mb-4 flex items-center gap-2">
@@ -866,8 +1277,26 @@ export function UserWalletManagement() {
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4 flex-1">
-                              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/50">
-                                <Coins className="w-5 h-5 text-cyan-400" />
+                              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/50 overflow-hidden">
+                                {coinIcons.has(wallet.coin_type) ? (
+                                  <img 
+                                    src={coinIcons.get(wallet.coin_type)} 
+                                    alt={wallet.coin_type}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      const target = e.target as HTMLImageElement;
+                                      target.style.display = 'none';
+                                      const parent = target.parentElement;
+                                      if (parent && !parent.querySelector('svg')) {
+                                        const fallback = document.createElement('div');
+                                        fallback.innerHTML = '<svg class="w-5 h-5 text-cyan-400" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></svg>';
+                                        parent.appendChild(fallback.firstChild!);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <Coins className="w-5 h-5 text-cyan-400" />
+                                )}
                               </div>
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
@@ -892,6 +1321,58 @@ export function UserWalletManagement() {
                                   ≈ ₩{(wallet.balance * 1000).toLocaleString()}
                                 </p>
                               </div>
+                              
+                              {/* Hot ↔ Cold 이동 버튼 */}
+                              {wallet.balance > 0 && (
+                                <button
+                                  onClick={async () => {
+                                    const direction = wallet.wallet_type === 'hot' ? 'Cold' : 'Hot';
+                                    const amount = prompt(`${direction} Wallet으로 이동할 금액을 입력하세요 (보유: ${wallet.balance})`);
+                                    
+                                    if (!amount || parseFloat(amount) <= 0) return;
+                                    if (parseFloat(amount) > wallet.balance) {
+                                      toast.error('잔액이 부족합니다');
+                                      return;
+                                    }
+
+                                    try {
+                                      const endpoint = wallet.wallet_type === 'hot' ? 'move-to-cold' : 'move-to-hot';
+                                      const backendUrl = 'https://mzoeeqmtvlnyonicycvg.supabase.co/functions/v1/make-server-b6d5667f';
+                                      
+                                      const response = await fetch(`${backendUrl}/transaction/${endpoint}`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          user_id: selectedUser.user_id,
+                                          coin_type: wallet.coin_type,
+                                          amount: amount
+                                        })
+                                      });
+
+                                      const result = await response.json();
+                                      
+                                      if (result.success) {
+                                        toast.success(result.message);
+                                        fetchUserWallets(selectedUser.user_id);
+                                      } else {
+                                        toast.error(result.error || '이동 실패');
+                                      }
+                                    } catch (error: any) {
+                                      console.error('Wallet move error:', error);
+                                      toast.error('자산 이동 실패');
+                                    }
+                                  }}
+                                  className={`p-2 rounded transition-colors ${
+                                    wallet.wallet_type === 'hot'
+                                      ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10'
+                                      : 'text-orange-400 hover:text-orange-300 hover:bg-orange-500/10'
+                                  }`}
+                                  title={wallet.wallet_type === 'hot' ? 'Cold Wallet으로 이동' : 'Hot Wallet으로 이동'}
+                                >
+                                  {wallet.wallet_type === 'hot' ? '❄️' : '🔥'}
+                                </button>
+                              )}
+                              
                               <button
                                 onClick={() => copyToClipboard(wallet.address, wallet.wallet_id)}
                                 className="p-2 text-slate-400 hover:text-cyan-400 transition-colors"
@@ -910,14 +1391,16 @@ export function UserWalletManagement() {
                   </div>
                 )}
               </div>
-            </NeonCard>
-          )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* 코인 추가 모달 */}
       {showAddCoinModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
           <div className="bg-slate-900 rounded-lg border border-cyan-500/30 shadow-xl max-w-md w-full">
             <div className="p-6">
               <h3 className="text-xl text-cyan-400 mb-4">코인 추가</h3>
@@ -980,7 +1463,7 @@ export function UserWalletManagement() {
 
       {/* 비밀번호 초기화 모달 */}
       {showPasswordReset && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
           <div className="bg-slate-900 rounded-lg border border-orange-500/30 shadow-xl max-w-md w-full">
             <div className="p-6">
               <h3 className="text-xl text-orange-400 mb-4 flex items-center gap-2">
@@ -1027,6 +1510,190 @@ export function UserWalletManagement() {
                   className="flex-1 px-4 py-2 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-all border border-orange-500/50"
                 >
                   적용
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 사용자 생성 모달 */}
+      {showCreateUserModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+          <div className="bg-slate-900 rounded-lg border border-cyan-500/30 shadow-xl max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-cyan-500/20 border border-cyan-500/50 rounded-lg">
+                    <UserPlus className="w-6 h-6 text-cyan-400" />
+                  </div>
+                  <h3 className="text-xl text-cyan-400">회원 추가</h3>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-slate-400 text-sm mb-2">
+                    사용자명 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={createUserForm.username}
+                    onChange={(e) => setCreateUserForm({ ...createUserForm, username: e.target.value })}
+                    placeholder="사용자명 입력"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300 focus:outline-none focus:border-cyan-500"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-slate-400 text-sm mb-2">
+                    이메일 <span className="text-red-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={createUserForm.email}
+                      onChange={(e) => {
+                        setCreateUserForm({ ...createUserForm, email: e.target.value });
+                        // 디바운싱은 useEffect에서 처리
+                        // 입력 중에는 체크 상태로 표시
+                        if (e.target.value.trim()) {
+                          setEmailValidation(prev => ({
+                            ...prev,
+                            isChecking: true,
+                            message: '이메일 확인 중...'
+                          }));
+                        } else {
+                          setEmailValidation({
+                            isValid: false,
+                            isAvailable: null,
+                            isChecking: false,
+                            message: ''
+                          });
+                        }
+                      }}
+                      placeholder="email@example.com"
+                      className={`w-full px-4 py-2 bg-slate-800 border rounded-lg text-slate-300 focus:outline-none transition-colors ${
+                        !createUserForm.email 
+                          ? 'border-slate-700 focus:border-cyan-500'
+                          : emailValidation.isChecking
+                          ? 'border-yellow-500/50 focus:border-yellow-500'
+                          : emailValidation.isAvailable === true
+                          ? 'border-green-500/50 focus:border-green-500'
+                          : emailValidation.isAvailable === false
+                          ? 'border-red-500/50 focus:border-red-500'
+                          : !emailValidation.isValid
+                          ? 'border-red-500/50 focus:border-red-500'
+                          : 'border-slate-700 focus:border-cyan-500'
+                      }`}
+                      required
+                    />
+                    {emailValidation.isChecking && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <Loader2 className="w-4 h-4 text-yellow-400 animate-spin" />
+                      </div>
+                    )}
+                    {!emailValidation.isChecking && emailValidation.isAvailable === true && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <Check className="w-4 h-4 text-green-400" />
+                      </div>
+                    )}
+                  </div>
+                  {emailValidation.message && (
+                    <p className={`text-xs mt-1 ${
+                      emailValidation.isChecking
+                        ? 'text-yellow-400'
+                        : emailValidation.isAvailable === true
+                        ? 'text-green-400'
+                        : emailValidation.isAvailable === false
+                        ? 'text-red-400'
+                        : !emailValidation.isValid
+                        ? 'text-red-400'
+                        : 'text-slate-400'
+                    }`}>
+                      {emailValidation.message}
+                    </p>
+                  )}
+                </div>
+                
+                <div>
+                  <label className="block text-slate-400 text-sm mb-2">
+                    비밀번호 <span className="text-red-400">*</span>
+                    <span className="text-slate-500 ml-2">(최소 8자)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={createUserForm.password}
+                    onChange={(e) => setCreateUserForm({ ...createUserForm, password: e.target.value })}
+                    placeholder="8자 이상 입력"
+                    minLength={8}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300 focus:outline-none focus:border-cyan-500"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-slate-400 text-sm mb-2">전화번호</label>
+                  <input
+                    type="text"
+                    value={createUserForm.phoneNumber}
+                    onChange={(e) => setCreateUserForm({ ...createUserForm, phoneNumber: e.target.value })}
+                    placeholder="010-0000-0000 (선택사항)"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-slate-400 text-sm mb-2">
+                    소속 가맹점 <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    value={createUserForm.storeId}
+                    onChange={(e) => setCreateUserForm({ ...createUserForm, storeId: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300 focus:outline-none focus:border-cyan-500"
+                    required
+                  >
+                    <option value="">가맹점을 선택하세요</option>
+                    {stores.map(store => (
+                      <option key={store.user_id} value={store.user_id}>{store.username}</option>
+                    ))}
+                  </select>
+                  {stores.length === 0 && (
+                    <p className="text-yellow-400 text-xs mt-1">⚠️ 먼저 가맹점을 생성해주세요</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <button
+                  onClick={() => {
+                    setShowCreateUserModal(false);
+                    setEmailValidation({
+                      isValid: false,
+                      isAvailable: null,
+                      isChecking: false,
+                      message: ''
+                    });
+                  }}
+                  disabled={isCreatingUser}
+                  className="flex-1 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={handleCreateUser}
+                  disabled={isCreatingUser || emailValidation.isAvailable !== true || !createUserForm.email}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-lg transition-all shadow-lg shadow-cyan-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isCreatingUser ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      생성 중...
+                    </>
+                  ) : (
+                    '생성'
+                  )}
                 </button>
               </div>
             </div>

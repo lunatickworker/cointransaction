@@ -49,6 +49,7 @@ export function NotificationCenter({ userId, isAdmin = false, categoryFilter = n
     switch (type) {
       case 'signup':
         return <UserPlus className="w-5 h-5 text-green-400" />;
+      case 'account_verification':
       case 'verification_request':
       case 'verification_approved':
       case 'verification_rejected':

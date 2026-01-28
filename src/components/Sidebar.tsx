@@ -1,23 +1,76 @@
-import { LayoutDashboard, ArrowDownToLine, ArrowUpFromLine, Shield, Repeat, Zap, Coins, CheckCircle, ShoppingCart, Activity, Users, MessageCircle } from "lucide-react";
+import { LayoutDashboard, Users, Receipt, TrendingUp, DollarSign, Coins, Zap, Shield, MessageCircle, Settings, Home, Repeat, Store, User, Activity } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
 
-interface SidebarProps {
-  activeTab: string;
-  setActiveTab: (tab: string) => void;
-}
+export function Sidebar({ activeTab, setActiveTab }: { activeTab: string; setActiveTab: (tab: string) => void }) {
+  const { user } = useAuth();
 
-export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
-  
-  const menuItems = [
+  // 🔍 디버깅: 현재 사용자 정보 출력
+  console.log('🔍 Sidebar - Current User:', {
+    role: user?.role,
+    email: user?.email,
+    username: user?.username
+  });
+
+  // Center Admin 메뉴 (센터 관리자)
+  const centerMenuItems = [
     { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
     { id: "users-wallets", label: "사용자 & 지갑", icon: Users },
-    { id: "deposit-withdrawal", label: "구매 요청 관리", icon: ShoppingCart },
+    { id: "store-management", label: "가맹점 관리", icon: Store },
+    { id: "account-verifications", label: "계좌인증 관리", icon: Shield },
+    { id: "deposit-withdrawal", label: "입출금 관리", icon: Receipt },
     { id: "swaps", label: "스왑 관리", icon: Repeat },
-    { id: "account-verifications", label: "계좌인증 관리", icon: CheckCircle },
+    { id: "settlement", label: "정산 관리", icon: DollarSign },
     { id: "support-center", label: "고객센터", icon: MessageCircle },
+  ];
+
+  // Master Admin 메뉴 (마스터 관리자만)
+  const masterMenuItems = [
+    { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
+    { id: "users-wallets", label: "사용자 & 지갑", icon: Users },
+    { id: "store-management", label: "가맹점 관리", icon: Store },
+    { id: "account-verifications", label: "계좌인증 관리", icon: Shield },
+    { id: "deposit-withdrawal", label: "입출금 관리", icon: Receipt },
+    { id: "swaps", label: "스왑 관리", icon: Repeat },
+    { id: "settlement", label: "정산 관리", icon: DollarSign },
     { id: "coins", label: "코인 관리", icon: Coins },
     { id: "gas-policy", label: "가스비 정책", icon: Zap },
     { id: "security", label: "보안 모니터", icon: Shield },
   ];
+
+  // Store Admin 메뉴 (가맹점 관리자) - 제한된 기능만
+  const storeMenuItems = [
+    { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
+    { id: "users-wallets", label: "소속 회원", icon: Users },
+    { id: "swaps", label: "거래 내역", icon: TrendingUp },
+  ];
+
+  // Agency Admin 메뉴 (에이전시 관리자)
+  const agencyMenuItems = [
+    { id: "dashboard", label: "대시보드", icon: LayoutDashboard },
+    { id: "users-wallets", label: "사용자 & 지갑", icon: Users },
+    { id: "deposit-withdrawal", label: "거래 내역", icon: Receipt },
+    { id: "settlement", label: "정산 관리", icon: DollarSign },
+  ];
+
+  // Role에 따라 메뉴 결정
+  let menuItems = centerMenuItems; // 기본값
+  
+  if (user?.role === 'store') {
+    menuItems = storeMenuItems;
+  } else if (user?.role === 'agency') {
+    menuItems = agencyMenuItems;
+  } else if (user?.role === 'center' || user?.role === 'admin') {
+    menuItems = centerMenuItems;
+  } else if (user?.role === 'master') {
+    menuItems = masterMenuItems;
+  }
+
+  // 🔍 디버깅: 할당된 메뉴 출력
+  console.log('🔍 Sidebar - Selected Menu:', {
+    role: user?.role,
+    menuCount: menuItems.length,
+    menuIds: menuItems.map(m => m.id)
+  });
 
   return (
     <aside className="w-64 bg-slate-900/50 backdrop-blur-xl border-r border-cyan-500/20">

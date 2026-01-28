@@ -14,60 +14,76 @@ interface UseNotificationsReturn {
 export function useNotifications(userId: string | undefined, isAdmin: boolean = false): UseNotificationsReturn {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  // 로컬 스토리지에서 알림 불러오기
+  // Supabase에서 알림 불러오기
   useEffect(() => {
     if (!userId) return;
     
-    const storageKey = `notifications_${userId}`;
-    const stored = localStorage.getItem(storageKey);
-    
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setNotifications(parsed);
-      } catch (e) {
-        console.error('Failed to parse notifications:', e);
+    const fetchNotifications = async () => {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error) {
+        console.error('Failed to fetch notifications:', error);
+        return;
       }
-    }
-  }, [userId]);
 
-  // 로컬 스토리지에 저장
-  const saveNotifications = useCallback((notifs: Notification[]) => {
-    if (!userId) return;
-    
-    const storageKey = `notifications_${userId}`;
-    // 최근 100개만 보관
-    const toSave = notifs.slice(0, 100);
-    localStorage.setItem(storageKey, JSON.stringify(toSave));
-    setNotifications(toSave);
-  }, [userId]);
-
-  // 새 알림 추가
-  const addNotification = useCallback((notif: Omit<Notification, 'id' | 'created_at'>) => {
-    const newNotif: Notification = {
-      ...notif,
-      id: `${Date.now()}_${Math.random()}`,
-      created_at: new Date().toISOString(),
+      if (data) {
+        // DB 형식을 Notification 타입으로 변환
+        const formattedNotifications: Notification[] = data.map(n => ({
+          id: n.notification_id,
+          user_id: n.user_id,
+          type: n.type as Notification['type'],
+          title: n.title,
+          message: n.message,
+          read: n.is_read,
+          created_at: n.created_at,
+          data: n.data,
+        }));
+        setNotifications(formattedNotifications);
+      }
     };
-    
-    setNotifications(prev => {
-      const updated = [newNotif, ...prev];
-      saveNotifications(updated);
-      return updated;
-    });
 
-    // 소리 알림만 (토스트 알림 제거 - 대량 알림 시 문제 방지)
-    try {
-      // 간단한 비프음
-      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHGS57OihUhELTKXh8bllHAU2jdXzzn0pBSl+zPLaizsIGGK37OihUhEMUKjj8bllHAU2jdXzzn0pBSh+zPLaizsIG2G37OihUhEMUKjj8bllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihU');
-      audio.volume = 0.2;
-      audio.play().catch(() => {}); // 무음 모드에서는 무시
-    } catch (e) {
-      // 알림음 재생 실패해도 무시
-    }
-  }, [saveNotifications]);
+    fetchNotifications();
 
-  // 관리자 실시간 구독
+    // 실시간 구독: 새 알림 감지
+    const notificationChannel = supabase
+      .channel(`notifications_${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`
+        },
+        (payload: any) => {
+          console.log('🔔 Notification change detected:', payload);
+          fetchNotifications();
+          
+          // 새 알림이면 소리 재생
+          if (payload.eventType === 'INSERT') {
+            try {
+              const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHGS57OihUhELTKXh8bllHAU2jdXzzn0pBSl+zPLaizsIGGK37OihUhEMUKjj8bllHAU2jdXzzn0pBSh+zPLaizsIG2G37OihUhEMUKjj8bllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihUxELT6jj8rllHAU1jdXzzn0pBSh+zPLaizsIG2G37OihU');
+              audio.volume = 0.2;
+              audio.play().catch(() => {}); 
+            } catch (e) {
+              // 알림음 재생 실패해도 무시
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(notificationChannel);
+    };
+  }, [userId]);
+
+  // 관리자 실시간 구독 (기존 로직 유지)
   useEffect(() => {
     if (!userId || !isAdmin) return;
 
@@ -78,14 +94,15 @@ export function useNotifications(userId: string | undefined, isAdmin: boolean = 
       .channel('admin-signups')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'auth_users' },
-        (payload: any) => {
-          addNotification({
+        { event: 'INSERT', schema: 'public', table: 'users' },
+        async (payload: any) => {
+          // DB에 알림 생성
+          await supabase.from('notifications').insert({
             user_id: userId,
             type: 'signup',
             title: '새 회원 가입',
             message: `${payload.new.username || payload.new.email}님이 가입했습니다.`,
-            read: false,
+            is_read: false,
             data: payload.new,
           });
         }
@@ -99,18 +116,19 @@ export function useNotifications(userId: string | undefined, isAdmin: boolean = 
       .on(
         'postgres_changes',
         { 
-          event: 'INSERT', 
+          event: 'UPDATE', 
           schema: 'public', 
           table: 'account_verifications',
           filter: 'status=eq.pending'
         },
-        (payload: any) => {
-          addNotification({
+        async (payload: any) => {
+          // DB에 알림 생성
+          await supabase.from('notifications').insert({
             user_id: userId,
             type: 'verification_request',
             title: '1원 인증 요청',
             message: `새로운 계좌 인증 요청이 있습니다.`,
-            read: false,
+            is_read: false,
             data: payload.new,
           });
         }
@@ -118,156 +136,63 @@ export function useNotifications(userId: string | undefined, isAdmin: boolean = 
       .subscribe();
     channels.push(verificationChannel);
 
-    // 3. 구매 요청 감지
-    const purchaseChannel = supabase
-      .channel('admin-purchases')
-      .on(
-        'postgres_changes',
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'transfer_requests',
-          filter: 'status=eq.pending'
-        },
-        (payload: any) => {
-          addNotification({
-            user_id: userId,
-            type: 'purchase_request',
-            title: '새 구매 요청',
-            message: `${payload.new.coin_type} ${payload.new.amount.toLocaleString()}원 구매 요청`,
-            read: false,
-            data: payload.new,
-          });
-        }
-      )
-      .subscribe();
-    channels.push(purchaseChannel);
-
     return () => {
       channels.forEach(channel => supabase.removeChannel(channel));
     };
-  }, [userId, isAdmin, addNotification]);
-
-  // 사용자 실시간 구독
-  useEffect(() => {
-    if (!userId || isAdmin) return;
-
-    const channels: any[] = [];
-
-    // 1. 계좌 인증 상태 변경 감지
-    const verificationChannel = supabase
-      .channel('user-verifications')
-      .on(
-        'postgres_changes',
-        { 
-          event: 'UPDATE', 
-          schema: 'public', 
-          table: 'account_verifications',
-          filter: `user_id=eq.${userId}`
-        },
-        (payload: any) => {
-          if (payload.new.status === 'approved') {
-            addNotification({
-              user_id: userId,
-              type: 'verification_approved',
-              title: '계좌 인증 완료',
-              message: '1원 인증이 승인되었습니다. 이제 모든 기능을 사용할 수 있습니다.',
-              read: false,
-              data: payload.new,
-            });
-          } else if (payload.new.status === 'rejected') {
-            addNotification({
-              user_id: userId,
-              type: 'verification_rejected',
-              title: '계좌 인증 거절',
-              message: `인증이 거절되었습니다. 사유: ${payload.new.rejection_reason || '확인 필요'}`,
-              read: false,
-              data: payload.new,
-            });
-          }
-        }
-      )
-      .subscribe();
-    channels.push(verificationChannel);
-
-    // 2. 구매 요청 상태 변경 감지
-    const purchaseChannel = supabase
-      .channel('user-purchases')
-      .on(
-        'postgres_changes',
-        { 
-          event: 'UPDATE', 
-          schema: 'public', 
-          table: 'transfer_requests',
-          filter: `from_user_id=eq.${userId}`
-        },
-        (payload: any) => {
-          if (payload.new.status === 'approved') {
-            addNotification({
-              user_id: userId,
-              type: 'purchase_approved',
-              title: '구매 승인',
-              message: `${payload.new.coin_type} ${payload.new.amount.toLocaleString()}원 구매가 승인되었습니다.`,
-              read: false,
-              data: payload.new,
-            });
-          } else if (payload.new.status === 'completed') {
-            addNotification({
-              user_id: userId,
-              type: 'purchase_completed',
-              title: '구매 완료',
-              message: `${payload.new.coin_type} ${payload.new.amount.toLocaleString()}원 구매가 완료되었습니다.`,
-              read: false,
-              data: payload.new,
-            });
-          } else if (payload.new.status === 'rejected') {
-            addNotification({
-              user_id: userId,
-              type: 'purchase_rejected',
-              title: '구매 거절',
-              message: `구매 요청이 거절되었습니다. 사유: ${payload.new.rejection_reason || '확인 필요'}`,
-              read: false,
-              data: payload.new,
-            });
-          }
-        }
-      )
-      .subscribe();
-    channels.push(purchaseChannel);
-
-    return () => {
-      channels.forEach(channel => supabase.removeChannel(channel));
-    };
-  }, [userId, isAdmin, addNotification]);
+  }, [userId, isAdmin]);
 
   // 읽음 표시
   const markAsRead = useCallback(async (id: string) => {
-    setNotifications(prev => {
-      const updated = prev.map(n => 
-        n.id === id ? { ...n, read: true } : n
-      );
-      saveNotifications(updated);
-      return updated;
-    });
-  }, [saveNotifications]);
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('notification_id', id);
+
+    if (error) {
+      console.error('Failed to mark as read:', error);
+      return;
+    }
+
+    setNotifications(prev => 
+      prev.map(n => n.id === id ? { ...n, read: true } : n)
+    );
+  }, []);
 
   // 전체 읽음 표시
   const markAllAsRead = useCallback(async () => {
-    setNotifications(prev => {
-      const updated = prev.map(n => ({ ...n, read: true }));
-      saveNotifications(updated);
-      return updated;
-    });
-  }, [saveNotifications]);
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      console.error('Failed to mark all as read:', error);
+      return;
+    }
+
+    setNotifications(prev => 
+      prev.map(n => ({ ...n, read: true }))
+    );
+  }, [userId]);
 
   // 알림 삭제
   const clearNotification = useCallback((id: string) => {
-    setNotifications(prev => {
-      const updated = prev.filter(n => n.id !== id);
-      saveNotifications(updated);
-      return updated;
-    });
-  }, [saveNotifications]);
+    supabase
+      .from('notifications')
+      .delete()
+      .eq('notification_id', id)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to delete notification:', error);
+          return;
+        }
+        
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      });
+  }, []);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 

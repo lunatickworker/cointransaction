@@ -2,6 +2,7 @@ import { Plus, Wallet, ChevronRight, TrendingUp, Eye, EyeOff } from 'lucide-reac
 import { Screen, WalletData, CoinType } from '../App';
 import { getCoinRateSync, preloadCoinRates } from '../utils/helpers';
 import { useState, useEffect } from 'react';
+import { supabase } from '../../utils/supabase/client';
 
 interface WalletListProps {
   wallets: WalletData[];
@@ -13,6 +14,32 @@ export function WalletList({ wallets, onNavigate, onSelectCoin }: WalletListProp
   const [showBalance, setShowBalance] = useState(true);
   const [totalBalance, setTotalBalance] = useState(0);
   const [prices, setPrices] = useState<{ [key: string]: number }>({});
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
+
+  // 코인 아이콘 로드
+  useEffect(() => {
+    const fetchCoinIcons = async () => {
+      try {
+        const { data: coins } = await supabase
+          .from('supported_tokens')
+          .select('symbol, icon_url');
+        
+        if (coins) {
+          const iconMap = new Map<string, string>();
+          coins.forEach((coin: any) => {
+            if (coin.icon_url) {
+              iconMap.set(coin.symbol, coin.icon_url);
+            }
+          });
+          setCoinIcons(iconMap);
+        }
+      } catch (error) {
+        console.error('Error fetching coin icons:', error);
+      }
+    };
+
+    fetchCoinIcons();
+  }, []);
 
   useEffect(() => {
     preloadCoinRates().then(() => {
@@ -34,6 +61,12 @@ export function WalletList({ wallets, onNavigate, onSelectCoin }: WalletListProp
 
   return (
     <div className="space-y-6">
+      {/* PC 제목 */}
+      <div className="hidden lg:block mb-6">
+        <h2 className="text-white text-2xl">내 지갑</h2>
+        <p className="text-slate-400 text-sm">보유 중인 암호화폐</p>
+      </div>
+
       {/* 총 자산 카드 */}
       <div className="relative group">
         <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-2xl opacity-30 group-hover:opacity-40 blur transition-opacity"></div>
@@ -135,12 +168,32 @@ export function WalletList({ wallets, onNavigate, onSelectCoin }: WalletListProp
                         <div className="flex items-center gap-4">
                           {/* 코인 아이콘 */}
                           <div 
-                            className="w-12 h-12 rounded-full bg-slate-700 border-2 border-cyan-500/30 group-hover:border-cyan-500 flex items-center justify-center transition-all"
+                            className="w-12 h-12 rounded-full bg-slate-700 border-2 border-cyan-500/30 group-hover:border-cyan-500 flex items-center justify-center transition-all overflow-hidden"
                             style={{ boxShadow: '0 0 15px rgba(6, 182, 212, 0.3)' }}
                           >
-                            <span className="text-cyan-400 group-hover:text-cyan-300" style={{ filter: 'drop-shadow(0 0 3px rgba(6, 182, 212, 0.8))' }}>
-                              {wallet.coin_type}
-                            </span>
+                            {coinIcons.has(wallet.coin_type) ? (
+                              <img 
+                                src={coinIcons.get(wallet.coin_type)} 
+                                alt={wallet.coin_type}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                  const parent = target.parentElement;
+                                  if (parent && !parent.querySelector('.fallback-text')) {
+                                    const fallback = document.createElement('span');
+                                    fallback.className = 'fallback-text text-cyan-400 group-hover:text-cyan-300';
+                                    fallback.style.filter = 'drop-shadow(0 0 3px rgba(6, 182, 212, 0.8))';
+                                    fallback.textContent = wallet.coin_type;
+                                    parent.appendChild(fallback);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <span className="text-cyan-400 group-hover:text-cyan-300" style={{ filter: 'drop-shadow(0 0 3px rgba(6, 182, 212, 0.8))' }}>
+                                {wallet.coin_type}
+                              </span>
+                            )}
                           </div>
 
                           {/* 지갑 정보 */}

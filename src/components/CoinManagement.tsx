@@ -211,19 +211,19 @@ export function CoinManagement() {
   const handleEdit = (coin: CoinData) => {
     setEditingCoin(coin);
     setFormData({
-      symbol: coin.symbol,
-      name: coin.name,
-      network: coin.network,
-      contract_address: coin.contract_address || '',
+      symbol: coin.symbol || '',
+      name: coin.name || '',
+      network: coin.network || '',
+      contract_address: coin.contract_address ?? '',
       decimals: (coin.decimals ?? 18).toString(),
       chain_id: (coin.chain_id ?? 1).toString(),
-      rpc_url: coin.rpc_url || '',
-      explorer_url: coin.explorer_url || '',
+      rpc_url: coin.rpc_url ?? '',
+      explorer_url: coin.explorer_url ?? '',
       min_deposit: (coin.min_deposit ?? 0).toString(),
       min_withdrawal: (coin.min_withdrawal ?? 0).toString(),
       withdrawal_fee: (coin.withdrawal_fee ?? 0).toString(),
       is_active: coin.is_active ?? true,
-      icon_url: coin.icon_url || ''
+      icon_url: coin.icon_url ?? ''
     });
   };
 
@@ -424,10 +424,27 @@ export function CoinManagement() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
                     <div 
-                      className="w-12 h-12 rounded-full bg-slate-800 border-2 border-cyan-500 flex items-center justify-center"
+                      className="w-12 h-12 rounded-full bg-slate-800 border-2 border-cyan-500 flex items-center justify-center overflow-hidden"
                       style={{ boxShadow: '0 0 15px rgba(6, 182, 212, 0.6)' }}
                     >
-                      <span className="text-cyan-400 text-sm">{coin.symbol}</span>
+                      {coin.icon_url ? (
+                        <img 
+                          src={coin.icon_url} 
+                          alt={coin.symbol}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            // 이미지 로드 실패시 텍스트로 폴백
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            const fallback = document.createElement('span');
+                            fallback.className = 'text-cyan-400 text-sm';
+                            fallback.textContent = coin.symbol;
+                            target.parentElement?.appendChild(fallback);
+                          }}
+                        />
+                      ) : (
+                        <span className="text-cyan-400 text-sm">{coin.symbol}</span>
+                      )}
                     </div>
                     <div>
                       <div className="flex items-center gap-2 mb-1">
@@ -507,7 +524,7 @@ export function CoinManagement() {
       {/* 코인 추가/수정 모달 */}
       {(showAddModal || editingCoin) && (
         <div 
-          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-hidden"
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 overflow-hidden"
           onClick={(e) => {
             // 바탕 클릭시 모달 닫기
             if (e.target === e.currentTarget) {
@@ -598,26 +615,31 @@ export function CoinManagement() {
                   </div>
 
                   <div>
-                    <label className="block text-slate-300 mb-2 text-sm">체인 ID</label>
+                    <label className="block text-slate-300 mb-2 text-sm">체인 ID / 네트워크 *</label>
                     <input
-                      type="number"
-                      step="1"
+                      type="text"
                       value={formData.chain_id}
                       onChange={(e) => setFormData({ ...formData, chain_id: e.target.value })}
                       className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 transition-all"
-                      placeholder="1"
+                      placeholder="1 (Ethereum) / 137 (Polygon)"
                     />
+                    <p className="text-slate-500 text-xs mt-1">
+                      EVM: 숫자 (1, 137 등) / Tron: 임의값 (권장: 728)
+                    </p>
                   </div>
 
                   <div>
-                    <label className="block text-slate-300 mb-2 text-sm">RPC URL</label>
+                    <label className="block text-slate-300 mb-2 text-sm">RPC URL *</label>
                     <input
                       type="text"
                       value={formData.rpc_url}
                       onChange={(e) => setFormData({ ...formData, rpc_url: e.target.value })}
                       className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 transition-all"
-                      placeholder="https://mainnet.infura.io/v3/..."
+                      placeholder="https://api.trongrid.io"
                     />
+                    <p className="text-slate-500 text-xs mt-1">
+                      Tron: trongrid.io 포함 시 자동 인식
+                    </p>
                   </div>
 
                   <div>

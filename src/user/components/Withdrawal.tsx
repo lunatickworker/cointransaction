@@ -35,6 +35,32 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
   const [gasPaymentConfig, setGasPaymentConfig] = useState<GasPaymentConfig | null>(null);
   const [userLevel, setUserLevel] = useState<string>('Basic');
   const [coins, setCoins] = useState<CoinType[]>([]);
+  const [coinIcons, setCoinIcons] = useState<Map<string, string>>(new Map());
+
+  // 코인 아이콘 로드
+  useEffect(() => {
+    const fetchCoinIcons = async () => {
+      try {
+        const { data: coinData } = await supabase
+          .from('supported_tokens')
+          .select('symbol, icon_url');
+        
+        if (coinData) {
+          const iconMap = new Map<string, string>();
+          coinData.forEach((coin: any) => {
+            if (coin.icon_url) {
+              iconMap.set(coin.symbol, coin.icon_url);
+            }
+          });
+          setCoinIcons(iconMap);
+        }
+      } catch (error) {
+        console.error('Error fetching coin icons:', error);
+      }
+    };
+
+    fetchCoinIcons();
+  }, []);
 
   // 지갑이 있는 코인만 표시
   useEffect(() => {
@@ -294,12 +320,12 @@ export function Withdrawal({ wallets, selectedCoin, onNavigate, onSelectCoin }: 
       <div className="flex items-center gap-4">
         <button
           onClick={() => onNavigate('home')}
-          className="w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
+          className="lg:hidden w-10 h-10 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-500/50 transition-all active:scale-95"
         >
           <ArrowLeft className="w-5 h-5 text-cyan-400" />
         </button>
         <div>
-          <h2 className="text-white text-xl">출금</h2>
+          <h2 className="text-white text-xl lg:text-2xl">출금</h2>
           <p className="text-slate-400 text-sm">코인을 출금하세요</p>
         </div>
       </div>

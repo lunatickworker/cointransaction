@@ -8,7 +8,7 @@ interface BottomNavProps {
 
 export function BottomNav({ currentScreen, onNavigate }: BottomNavProps) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900/95 backdrop-blur-xl border-t border-cyan-500/20 z-20">
+    <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-cyan-500/20 z-20">
       <div className="grid grid-cols-4 gap-1 p-2">
         <button
           onClick={() => onNavigate('home')}
